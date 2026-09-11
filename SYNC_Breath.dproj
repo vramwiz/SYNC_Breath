@@ -1,4 +1,4 @@
-<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+﻿<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
     <PropertyGroup>
         <ProjectGuid>{918738A0-C3BB-4AD9-9D18-7C9307BA1E0A}</ProjectGuid>
         <ProjectVersion>20.4</ProjectVersion>
@@ -26,12 +26,6 @@
         <CfgParent>Base</CfgParent>
         <Base>true</Base>
     </PropertyGroup>
-    <PropertyGroup Condition="('$(Platform)'=='Win64' and '$(Cfg_1)'=='true') or '$(Cfg_1_Win64)'!=''">
-        <Cfg_1_Win64>true</Cfg_1_Win64>
-        <CfgParent>Cfg_1</CfgParent>
-        <Cfg_1>true</Cfg_1>
-        <Base>true</Base>
-    </PropertyGroup>
     <PropertyGroup Condition="'$(Config)'=='Release' or '$(Cfg_2)'!=''">
         <Cfg_2>true</Cfg_2>
         <CfgParent>Base</CfgParent>
@@ -42,6 +36,10 @@
         <CfgParent>Cfg_2</CfgParent>
         <Cfg_2>true</Cfg_2>
         <Base>true</Base>
+    </PropertyGroup>
+    <PropertyGroup Condition="'$(Base)'!=''">
+        <GenDll>true</GenDll>
+        <SanitizedProjectName>SYNC_Breath</SanitizedProjectName>
     </PropertyGroup>
     <PropertyGroup Condition="'$(Cfg_1)'!=''">
         <BT_BuildType>Debug</BT_BuildType>
@@ -61,32 +59,19 @@
         <DCC_SymbolReferenceInfo>0</DCC_SymbolReferenceInfo>
         <DCC_DebugInformation>0</DCC_DebugInformation>
     </PropertyGroup>
-    <PropertyGroup Condition="('$(Platform)'=='Win64') and ('$(Cfg_1)'=='true')">
-        <Manifest_File>(なし)</Manifest_File>
-        <AppDPIAwarenessMode>none</AppDPIAwarenessMode>
-        <DCC_ExeOutput>C:\ProgramData\aviutl2\Plugin\SYNC_Breath</DCC_ExeOutput>
-        <PreBuildEvent>if not exist &quot;C:\ProgramData\aviutl2\Plugin\SYNC_Breath&quot; mkdir &quot;C:\ProgramData\aviutl2\Plugin\SYNC_Breath&quot;</PreBuildEvent>
-        <PreBuildEventIgnoreExitCode>False</PreBuildEventIgnoreExitCode>
-        <PostBuildEvent>copy /Y &quot;C:\ProgramData\aviutl2\Plugin\SYNC_Breath\$(PROJECTNAME).dll&quot; &quot;C:\ProgramData\aviutl2\Plugin\SYNC_Breath\$(PROJECTNAME).auf2&quot;</PostBuildEvent>
-        <PostBuildEventIgnoreExitCode>False</PostBuildEventIgnoreExitCode>
-        <Debugger_HostApplication>D:\aviutl2_v2.1.3a\aviutl2.exe</Debugger_HostApplication>
-    </PropertyGroup>
-    <PropertyGroup Condition="('$(Platform)'=='Win64') and ('$(Cfg_2)'=='true')">
-        <Manifest_File>(なし)</Manifest_File>
-        <AppDPIAwarenessMode>none</AppDPIAwarenessMode>
-        <DCC_ExeOutput>C:\ProgramData\aviutl2\Plugin\SYNC_Breath</DCC_ExeOutput>
-        <PreBuildEvent>if not exist &quot;C:\ProgramData\aviutl2\Plugin\SYNC_Breath&quot; mkdir &quot;C:\ProgramData\aviutl2\Plugin\SYNC_Breath&quot;</PreBuildEvent>
-        <PreBuildEventIgnoreExitCode>False</PreBuildEventIgnoreExitCode>
-        <PostBuildEvent>copy /Y &quot;C:\ProgramData\aviutl2\Plugin\SYNC_Breath\$(PROJECTNAME).dll&quot; &quot;C:\ProgramData\aviutl2\Plugin\SYNC_Breath\$(PROJECTNAME).auf2&quot;&amp;&amp;if exist &quot;C:\ProgramData\aviutl2\Plugin\SYNC_Breath\$(PROJECTNAME).dll&quot; del /Q &quot;C:\ProgramData\aviutl2\Plugin\SYNC_Breath\$(PROJECTNAME).dll&quot;&amp;&amp;if exist &quot;C:\ProgramData\aviutl2\Plugin\SYNC_Breath\$(PROJECTNAME).rsm&quot; del /Q &quot;C:\ProgramData\aviutl2\Plugin\SYNC_Breath\$(PROJECTNAME).rsm&quot;</PostBuildEvent>
-        <PostBuildEventIgnoreExitCode>False</PostBuildEventIgnoreExitCode>
+    <PropertyGroup Condition="'$(Cfg_2_Win64)'!=''">
         <Debugger_HostApplication>D:\aviutl2_v2.1.3a\aviutl2.exe</Debugger_HostApplication>
     </PropertyGroup>
     <ItemGroup>
         <DelphiCompile Include="$(MainSource)">
             <MainSource>MainSource</MainSource>
         </DelphiCompile>
-        <DCCReference Include="..\Syncroh2\AviUtl\Filter\AviUtl2FilterTypes.pas"/>
-        <DCCReference Include="..\Syncroh2\Plugin_Filter\PluginFilterTable.pas"/>
+        <DCCReference Include="Source\Lib\AviUtl2FilterTypes.pas"/>
+        <DCCReference Include="Source\Lib\PluginFilterTable.pas"/>
+        <DCCReference Include="Source\Common\Render\SYNC_Breath_LastFrameCapture.pas"/>
+        <DCCReference Include="Source\Plugin\Filter\SYNC_Breath_SettingsForm.pas">
+            <Form>FormBreathSettings</Form>
+        </DCCReference>
         <DCCReference Include="Source\Plugin\Filter\SYNC_Breath_FilterPlugin.pas"/>
         <BuildConfiguration Include="Base">
             <Key>Base</Key>
@@ -118,4 +103,24 @@
     </ProjectExtensions>
     <Import Project="$(BDS)\Bin\CodeGear.Delphi.Targets" Condition="Exists('$(BDS)\Bin\CodeGear.Delphi.Targets')"/>
     <Import Project="$(APPDATA)\Embarcadero\$(BDSAPPDATABASEDIR)\$(PRODUCTVERSION)\UserTools.proj" Condition="Exists('$(APPDATA)\Embarcadero\$(BDSAPPDATABASEDIR)\$(PRODUCTVERSION)\UserTools.proj')"/>
+    <PropertyGroup Condition="'$(Config)'=='Debug' And '$(Platform)'=='Win64'">
+        <Manifest_File>(なし)</Manifest_File>
+        <AppDPIAwarenessMode>none</AppDPIAwarenessMode>
+        <DCC_ExeOutput>C:\ProgramData\aviutl2\Plugin\SYNC_Breath</DCC_ExeOutput>
+        <PreBuildEvent>if not exist &quot;C:\ProgramData\aviutl2\Plugin\SYNC_Breath&quot; mkdir &quot;C:\ProgramData\aviutl2\Plugin\SYNC_Breath&quot;</PreBuildEvent>
+        <PreBuildEventIgnoreExitCode>False</PreBuildEventIgnoreExitCode>
+        <PostBuildEvent>copy /Y &quot;C:\ProgramData\aviutl2\Plugin\SYNC_Breath\$(PROJECTNAME).dll&quot; &quot;C:\ProgramData\aviutl2\Plugin\SYNC_Breath\$(PROJECTNAME).auf2&quot;</PostBuildEvent>
+        <PostBuildEventIgnoreExitCode>False</PostBuildEventIgnoreExitCode>
+        <Debugger_HostApplication>D:\aviutl2_v2.1.3a\aviutl2.exe</Debugger_HostApplication>
+    </PropertyGroup>
+    <PropertyGroup Condition="'$(Config)'=='Release' And '$(Platform)'=='Win64'">
+        <Manifest_File>(なし)</Manifest_File>
+        <AppDPIAwarenessMode>none</AppDPIAwarenessMode>
+        <DCC_ExeOutput>C:\ProgramData\aviutl2\Plugin\SYNC_Breath</DCC_ExeOutput>
+        <PreBuildEvent>if not exist &quot;C:\ProgramData\aviutl2\Plugin\SYNC_Breath&quot; mkdir &quot;C:\ProgramData\aviutl2\Plugin\SYNC_Breath&quot;</PreBuildEvent>
+        <PreBuildEventIgnoreExitCode>False</PreBuildEventIgnoreExitCode>
+        <PostBuildEvent>copy /Y &quot;C:\ProgramData\aviutl2\Plugin\SYNC_Breath\$(PROJECTNAME).dll&quot; &quot;C:\ProgramData\aviutl2\Plugin\SYNC_Breath\$(PROJECTNAME).auf2&quot;&amp;&amp;if exist &quot;C:\ProgramData\aviutl2\Plugin\SYNC_Breath\$(PROJECTNAME).dll&quot; del /Q &quot;C:\ProgramData\aviutl2\Plugin\SYNC_Breath\$(PROJECTNAME).dll&quot;&amp;&amp;if exist &quot;C:\ProgramData\aviutl2\Plugin\SYNC_Breath\$(PROJECTNAME).rsm&quot; del /Q &quot;C:\ProgramData\aviutl2\Plugin\SYNC_Breath\$(PROJECTNAME).rsm&quot;</PostBuildEvent>
+        <PostBuildEventIgnoreExitCode>False</PostBuildEventIgnoreExitCode>
+        <Debugger_HostApplication>D:\aviutl2_v2.1.3a\aviutl2.exe</Debugger_HostApplication>
+    </PropertyGroup>
 </Project>

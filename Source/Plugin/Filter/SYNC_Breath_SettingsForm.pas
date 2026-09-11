@@ -1,0 +1,878 @@
+unit SYNC_Breath_SettingsForm;
+
+
+interface
+
+uses
+  System.Classes,
+  System.SysUtils,
+  System.Types,
+  System.UITypes,
+  Vcl.Controls,
+  Vcl.Buttons,
+  Vcl.ComCtrls,
+  Vcl.Dialogs,
+  Vcl.ExtCtrls,
+  Vcl.Forms,
+  Vcl.Graphics,
+  Vcl.StdCtrls;
+
+type
+  TBreathGuidePoint = (bgpWaist, bgpChest, bgpNeck, bgpHead,
+    bgpLeftShoulder, bgpRightShoulder);
+  TBreathGuidePoints = array[TBreathGuidePoint] of TPointF;
+  TBreathEditMode = (bemGuide, bemPan);
+
+  TFormBreathSettings = class(TForm)
+    PreviewPaintBox: TPaintBox;
+    StatusPanel: TPanel;
+    StatusLabel: TLabel;
+    procedure FormCreate(Sender: TObject);
+    procedure FormDestroy(Sender: TObject);
+    procedure FormMouseWheel(Sender: TObject; Shift: TShiftState;
+      WheelDelta: Integer; MousePos: TPoint; var Handled: Boolean);
+    procedure PreviewPaintBoxDblClick(Sender: TObject);
+    procedure PreviewPaintBoxMouseDown(Sender: TObject;
+      Button: TMouseButton; Shift: TShiftState; X, Y: Integer);
+    procedure PreviewPaintBoxMouseMove(Sender: TObject;
+      Shift: TShiftState; X, Y: Integer);
+    procedure PreviewPaintBoxMouseUp(Sender: TObject;
+      Button: TMouseButton; Shift: TShiftState; X, Y: Integer);
+    procedure PreviewPaintBoxPaint(Sender: TObject);
+  private
+    FBackground: TBitmap;
+    FDragging: Boolean;
+    FDragOrigin: TPoint;
+    FFitToWindow: Boolean;
+    FOffset: TPoint;
+    FOffsetOrigin: TPoint;
+    FZoomPercent: Integer;
+    FGuidePoints: TBreathGuidePoints;
+    FEditMode: TBreathEditMode;
+    FSelectedPoint: Integer;
+    FGuideDragging: Boolean;
+    FTopPanel: TPanel;
+    FRightPanel: TPanel;
+    FEditButton: TButton;
+    FPanButton: TButton;
+    FFitButton: TButton;
+    FResetButton: TButton;
+    FPreviewButton: TButton;
+    FSelectionLabel: TLabel;
+    FPositionLabel: TLabel;
+    FPreviewBitmap: TBitmap;
+    FPreviewEnabled: Boolean;
+    FPreviewStartedTick: UInt64;
+    FPreviewTimer: TTimer;
+    function DestinationRect: TRect;
+    function CanvasToNormalized(X, Y: Integer;
+      out Position: TPointF): Boolean;
+    function GuidePointToCanvas(Kind: TBreathGuidePoint): TPoint;
+    function HitTestGuidePoint(X, Y: Integer): Integer;
+    procedure DrawGuide(Canvas: TCanvas);
+    procedure SetGuidePoint(Kind: TBreathGuidePoint;
+      const Position: TPointF);
+    procedure ResetGuide;
+    procedure CreateEditorControls;
+    procedure EditModeClick(Sender: TObject);
+    procedure PanModeClick(Sender: TObject);
+    procedure FitButtonClick(Sender: TObject);
+    procedure ResetButtonClick(Sender: TObject);
+    procedure PreviewButtonClick(Sender: TObject);
+    procedure PreviewTimerTick(Sender: TObject);
+    procedure UpdateBreathPreview;
+    procedure UpdateEditorControls;
+    procedure FitImage;
+    procedure UpdateStatus;
+  public
+    procedure SetBackgroundRgba(const Pixels: TBytes; Width, Height: Integer);
+    procedure SetCaptureStatus(const Value: string);
+    function TryLoadGuideDataText(const Text: string;
+      out ErrorText: string): Boolean;
+    function TrySaveGuideDataText(out Text, ErrorText: string): Boolean;
+  end;
+
+implementation
+
+uses
+  System.Math,
+  Winapi.Windows;
+
+{$R *.dfm}
+
+type
+  TControlAccess = class(TControl);
+
+function GuidePointName(Kind: TBreathGuidePoint): string;
+begin
+  case Kind of
+    bgpWaist: Result := #$8170;
+    bgpChest: Result := #$80F8;
+    bgpNeck: Result := #$9996;
+    bgpHead: Result := #$982D;
+    bgpLeftShoulder: Result := #$5DE6#$80A9;
+    bgpRightShoulder: Result := #$53F3#$80A9;
+  else
+    Result := '';
+  end;
+end;
+
+procedure TFormBreathSettings.CreateEditorControls;
+begin
+  FTopPanel := TPanel.Create(Self);
+  FTopPanel.Parent := Self;
+  FTopPanel.Align := alTop;
+  FTopPanel.Height := 48;
+  FTopPanel.BevelOuter := bvNone;
+
+  FEditButton := TButton.Create(Self);
+  FEditButton.Parent := FTopPanel;
+  FEditButton.SetBounds(8, 8, 100, 30);
+  FEditButton.Caption := #$30AC#$30A4#$30C9#$7DE8#$96C6;
+  FEditButton.OnClick := EditModeClick;
+
+  FPanButton := TButton.Create(Self);
+  FPanButton.Parent := FTopPanel;
+  FPanButton.SetBounds(114, 8, 100, 30);
+  FPanButton.Caption := #$8868#$793A#$79FB#$52D5;
+  FPanButton.OnClick := PanModeClick;
+
+  FFitButton := TButton.Create(Self);
+  FFitButton.Parent := FTopPanel;
+  FFitButton.SetBounds(220, 8, 90, 30);
+  FFitButton.Caption := #$5168#$4F53#$8868#$793A;
+  FFitButton.OnClick := FitButtonClick;
+
+  FResetButton := TButton.Create(Self);
+  FResetButton.Parent := FTopPanel;
+  FResetButton.SetBounds(316, 8, 90, 30);
+  FResetButton.Caption := #$521D#$671F#$914D#$7F6E;
+  FResetButton.OnClick := ResetButtonClick;
+
+  FPreviewButton := TButton.Create(Self);
+  FPreviewButton.Parent := FTopPanel;
+  FPreviewButton.SetBounds(420, 8, 130, 30);
+  FPreviewButton.Caption := #$547C#$5438#$30D7#$30EC#$30D3#$30E5#$30FC;
+  FPreviewButton.OnClick := PreviewButtonClick;
+
+  FRightPanel := TPanel.Create(Self);
+  FRightPanel.Parent := Self;
+  FRightPanel.Align := alRight;
+  FRightPanel.Width := 220;
+  FRightPanel.BevelOuter := bvNone;
+  FRightPanel.ParentBackground := False;
+  FRightPanel.Color := TColor($00292929);
+
+  FSelectionLabel := TLabel.Create(Self);
+  FSelectionLabel.Parent := FRightPanel;
+  FSelectionLabel.SetBounds(14, 18, 190, 22);
+  FSelectionLabel.Font.Color := clWhite;
+  FSelectionLabel.Font.Style := [fsBold];
+
+  FPositionLabel := TLabel.Create(Self);
+  FPositionLabel.Parent := FRightPanel;
+  FPositionLabel.SetBounds(14, 50, 190, 90);
+  FPositionLabel.Font.Color := TColor($00D0D0D0);
+  FPositionLabel.AutoSize := False;
+  FPositionLabel.WordWrap := True;
+end;
+
+procedure TFormBreathSettings.ResetGuide;
+begin
+  FGuidePoints[bgpHead] := PointF(0.50, 0.14);
+  FGuidePoints[bgpNeck] := PointF(0.50, 0.30);
+  FGuidePoints[bgpLeftShoulder] := PointF(0.28, 0.37);
+  FGuidePoints[bgpRightShoulder] := PointF(0.72, 0.37);
+  FGuidePoints[bgpChest] := PointF(0.50, 0.49);
+  FGuidePoints[bgpWaist] := PointF(0.50, 0.74);
+  FSelectedPoint := Ord(bgpChest);
+  UpdateEditorControls;
+  PreviewPaintBox.Invalidate;
+end;
+
+function TFormBreathSettings.CanvasToNormalized(X, Y: Integer;
+  out Position: TPointF): Boolean;
+var
+  Destination: TRect;
+begin
+  Destination := DestinationRect;
+  Result := (Destination.Width > 0) and (Destination.Height > 0) and
+    PtInRect(Destination, Point(X, Y));
+  if not Result then
+    Exit;
+  Position.X := EnsureRange((X - Destination.Left) / Destination.Width,
+    0.0, 1.0);
+  Position.Y := EnsureRange((Y - Destination.Top) / Destination.Height,
+    0.0, 1.0);
+end;
+
+function TFormBreathSettings.GuidePointToCanvas(
+  Kind: TBreathGuidePoint): TPoint;
+var
+  Destination: TRect;
+begin
+  Destination := DestinationRect;
+  Result.X := Destination.Left + Round(FGuidePoints[Kind].X *
+    Destination.Width);
+  Result.Y := Destination.Top + Round(FGuidePoints[Kind].Y *
+    Destination.Height);
+end;
+
+function TFormBreathSettings.HitTestGuidePoint(X, Y: Integer): Integer;
+var
+  Kind: TBreathGuidePoint;
+  P: TPoint;
+  Radius: Integer;
+begin
+  Result := -1;
+  Radius := MulDiv(10, CurrentPPI, 96);
+  for Kind := Low(TBreathGuidePoint) to High(TBreathGuidePoint) do
+  begin
+    P := GuidePointToCanvas(Kind);
+    if (Abs(P.X - X) <= Radius) and (Abs(P.Y - Y) <= Radius) then
+      Exit(Ord(Kind));
+  end;
+end;
+
+procedure TFormBreathSettings.SetGuidePoint(Kind: TBreathGuidePoint;
+  const Position: TPointF);
+const
+  MIN_GAP = 0.03;
+var
+  P: TPointF;
+  CenterX: Single;
+begin
+  P.X := EnsureRange(Position.X, 0.0, 1.0);
+  P.Y := EnsureRange(Position.Y, 0.0, 1.0);
+  CenterX := FGuidePoints[bgpChest].X;
+  case Kind of
+    bgpHead:
+      P.Y := Min(P.Y, FGuidePoints[bgpNeck].Y - MIN_GAP);
+    bgpNeck:
+      P.Y := EnsureRange(P.Y, FGuidePoints[bgpHead].Y + MIN_GAP,
+        FGuidePoints[bgpChest].Y - MIN_GAP);
+    bgpChest:
+      P.Y := EnsureRange(P.Y, FGuidePoints[bgpNeck].Y + MIN_GAP,
+        FGuidePoints[bgpWaist].Y - MIN_GAP);
+    bgpWaist:
+      P.Y := Max(P.Y, FGuidePoints[bgpChest].Y + MIN_GAP);
+    bgpLeftShoulder:
+      P.X := Min(P.X, CenterX - MIN_GAP);
+    bgpRightShoulder:
+      P.X := Max(P.X, CenterX + MIN_GAP);
+  end;
+  FGuidePoints[Kind] := P;
+  if Kind = bgpChest then
+  begin
+    FGuidePoints[bgpLeftShoulder].X := Min(
+      FGuidePoints[bgpLeftShoulder].X, P.X - MIN_GAP);
+    FGuidePoints[bgpRightShoulder].X := Max(
+      FGuidePoints[bgpRightShoulder].X, P.X + MIN_GAP);
+  end;
+end;
+
+procedure TFormBreathSettings.DrawGuide(Canvas: TCanvas);
+var
+  ChestPoint: TPoint;
+  HeadPoint: TPoint;
+  Kind: TBreathGuidePoint;
+  LeftShoulder: TPoint;
+  NeckPoint: TPoint;
+  P: TPoint;
+  Radius: Integer;
+  RightShoulder: TPoint;
+  ShoulderSpan: Integer;
+  WaistPoint: TPoint;
+  AbdomenRect: TRect;
+  ChestRect: TRect;
+  LeftArmEnd: TPoint;
+  LeftBody: array[0..3] of TPoint;
+  RightArmEnd: TPoint;
+  RightBody: array[0..3] of TPoint;
+  ShoulderCurve: array[0..6] of TPoint;
+  TorsoHalfWidth: Integer;
+begin
+  if (FBackground.Width <= 0) or (FBackground.Height <= 0) then
+    Exit;
+  HeadPoint := GuidePointToCanvas(bgpHead);
+  NeckPoint := GuidePointToCanvas(bgpNeck);
+  ChestPoint := GuidePointToCanvas(bgpChest);
+  WaistPoint := GuidePointToCanvas(bgpWaist);
+  LeftShoulder := GuidePointToCanvas(bgpLeftShoulder);
+  RightShoulder := GuidePointToCanvas(bgpRightShoulder);
+
+  ShoulderSpan := Max(1, RightShoulder.X - LeftShoulder.X);
+  ChestRect := Rect(LeftShoulder.X + ShoulderSpan div 10,
+    Min(LeftShoulder.Y, RightShoulder.Y) + 4,
+    RightShoulder.X - ShoulderSpan div 10,
+    ChestPoint.Y + Max(12, (WaistPoint.Y - ChestPoint.Y) div 3));
+  AbdomenRect := Rect(LeftShoulder.X + ShoulderSpan div 5,
+    ChestPoint.Y,
+    RightShoulder.X - ShoulderSpan div 5,
+    WaistPoint.Y);
+
+  Canvas.Pen.Color := TColor($000080FF);
+  Canvas.Pen.Width := Max(1, MulDiv(2, CurrentPPI, 96));
+  Canvas.Pen.Style := psDash;
+  Canvas.Brush.Style := bsClear;
+  Canvas.Ellipse(ChestRect);
+  Canvas.Font.Color := Canvas.Pen.Color;
+  Canvas.TextOut(ChestRect.Left + 6, ChestRect.Top + 5, #$80F8#$90E8);
+  Canvas.Pen.Color := TColor($0040C080);
+  Canvas.Ellipse(AbdomenRect);
+  Canvas.Font.Color := Canvas.Pen.Color;
+  Canvas.TextOut(AbdomenRect.Left + 6, AbdomenRect.Top + 5, #$8179#$90E8);
+
+  Canvas.Pen.Style := psSolid;
+  Canvas.Pen.Color := TColor($00E8C080);
+  Canvas.MoveTo(HeadPoint.X, HeadPoint.Y);
+  Canvas.LineTo(NeckPoint.X, NeckPoint.Y);
+  Canvas.LineTo(ChestPoint.X, ChestPoint.Y);
+  Canvas.LineTo(WaistPoint.X, WaistPoint.Y);
+  ShoulderCurve[0] := LeftShoulder;
+  ShoulderCurve[1] := Point(LeftShoulder.X + ShoulderSpan div 6,
+    LeftShoulder.Y - ShoulderSpan div 14);
+  ShoulderCurve[2] := Point(NeckPoint.X - ShoulderSpan div 7,
+    NeckPoint.Y + ShoulderSpan div 15);
+  ShoulderCurve[3] := NeckPoint;
+  ShoulderCurve[4] := Point(NeckPoint.X + ShoulderSpan div 7,
+    NeckPoint.Y + ShoulderSpan div 15);
+  ShoulderCurve[5] := Point(RightShoulder.X - ShoulderSpan div 6,
+    RightShoulder.Y - ShoulderSpan div 14);
+  ShoulderCurve[6] := RightShoulder;
+  PolyBezier(Canvas.Handle, ShoulderCurve[0], Length(ShoulderCurve));
+
+  TorsoHalfWidth := Max(10, ShoulderSpan div 4);
+  LeftBody[0] := LeftShoulder;
+  LeftBody[1] := Point(LeftShoulder.X - ShoulderSpan div 14,
+    ChestPoint.Y);
+  LeftBody[2] := Point(WaistPoint.X - TorsoHalfWidth - ShoulderSpan div 12,
+    WaistPoint.Y - (WaistPoint.Y - ChestPoint.Y) div 3);
+  LeftBody[3] := Point(WaistPoint.X - TorsoHalfWidth, WaistPoint.Y);
+  RightBody[0] := RightShoulder;
+  RightBody[1] := Point(RightShoulder.X + ShoulderSpan div 14,
+    ChestPoint.Y);
+  RightBody[2] := Point(WaistPoint.X + TorsoHalfWidth + ShoulderSpan div 12,
+    WaistPoint.Y - (WaistPoint.Y - ChestPoint.Y) div 3);
+  RightBody[3] := Point(WaistPoint.X + TorsoHalfWidth, WaistPoint.Y);
+  PolyBezier(Canvas.Handle, LeftBody[0], Length(LeftBody));
+  PolyBezier(Canvas.Handle, RightBody[0], Length(RightBody));
+  Canvas.MoveTo(LeftBody[3].X, LeftBody[3].Y);
+  Canvas.LineTo(RightBody[3].X, RightBody[3].Y);
+
+  LeftArmEnd := Point(LeftShoulder.X - ShoulderSpan div 12,
+    LeftShoulder.Y + (WaistPoint.Y - LeftShoulder.Y) div 2);
+  RightArmEnd := Point(RightShoulder.X + ShoulderSpan div 12,
+    RightShoulder.Y + (WaistPoint.Y - RightShoulder.Y) div 2);
+  Canvas.MoveTo(LeftShoulder.X, LeftShoulder.Y);
+  Canvas.LineTo(LeftArmEnd.X, LeftArmEnd.Y);
+  Canvas.MoveTo(RightShoulder.X, RightShoulder.Y);
+  Canvas.LineTo(RightArmEnd.X, RightArmEnd.Y);
+  Radius := Max(12, Abs(NeckPoint.Y - HeadPoint.Y));
+  Canvas.Ellipse(HeadPoint.X - Radius * 2 div 3,
+    HeadPoint.Y - Radius,
+    HeadPoint.X + Radius * 2 div 3, HeadPoint.Y + Radius);
+  Canvas.MoveTo(HeadPoint.X - Radius div 3, HeadPoint.Y + Radius);
+  Canvas.LineTo(NeckPoint.X - ShoulderSpan div 12, NeckPoint.Y);
+  Canvas.MoveTo(HeadPoint.X + Radius div 3, HeadPoint.Y + Radius);
+  Canvas.LineTo(NeckPoint.X + ShoulderSpan div 12, NeckPoint.Y);
+
+  Radius := MulDiv(6, CurrentPPI, 96);
+  for Kind := Low(TBreathGuidePoint) to High(TBreathGuidePoint) do
+  begin
+    P := GuidePointToCanvas(Kind);
+    if Ord(Kind) = FSelectedPoint then
+      Canvas.Brush.Color := TColor($000080FF)
+    else
+      Canvas.Brush.Color := TColor($00FFC060);
+    Canvas.Pen.Color := clWhite;
+    Canvas.Rectangle(P.X - Radius, P.Y - Radius,
+      P.X + Radius + 1, P.Y + Radius + 1);
+  end;
+  Canvas.Brush.Style := bsSolid;
+end;
+
+procedure TFormBreathSettings.EditModeClick(Sender: TObject);
+begin
+  FEditMode := bemGuide;
+  UpdateEditorControls;
+end;
+
+procedure TFormBreathSettings.PanModeClick(Sender: TObject);
+begin
+  FEditMode := bemPan;
+  UpdateEditorControls;
+end;
+
+procedure TFormBreathSettings.FitButtonClick(Sender: TObject);
+begin
+  FitImage;
+end;
+
+procedure TFormBreathSettings.ResetButtonClick(Sender: TObject);
+begin
+  ResetGuide;
+end;
+
+procedure TFormBreathSettings.PreviewButtonClick(Sender: TObject);
+begin
+  FPreviewEnabled := not FPreviewEnabled;
+  if FPreviewEnabled then
+  begin
+    FPreviewStartedTick := GetTickCount64 - 750;
+    FPreviewTimer.Enabled := True;
+    FPreviewButton.Caption := #$30D7#$30EC#$30D3#$30E5#$30FC#$505C#$6B62;
+    UpdateBreathPreview;
+  end
+  else
+  begin
+    FPreviewTimer.Enabled := False;
+    FPreviewButton.Caption := #$547C#$5438#$30D7#$30EC#$30D3#$30E5#$30FC;
+    PreviewPaintBox.Invalidate;
+  end;
+end;
+
+procedure TFormBreathSettings.PreviewTimerTick(Sender: TObject);
+begin
+  UpdateBreathPreview;
+end;
+
+procedure TFormBreathSettings.UpdateBreathPreview;
+const
+  PREVIEW_CYCLE_MS: UInt64 = 3000;
+  CHEST_EXPANSION = 0.45;
+  ABDOMEN_EXPANSION = 0.22;
+var
+  AbdomenInfluence: Double;
+  AbdomenWidth: Double;
+  BreathAmount: Double;
+  CenterX: Double;
+  ChestInfluence: Double;
+  ChestWidth: Double;
+  DestinationPixel: PByte;
+  DestinationRow: PByte;
+  Displacement: Double;
+  HorizontalInfluence: Double;
+  ImageX: Double;
+  ImageY: Double;
+  Influence: Double;
+  LeftX: Double;
+  LogicalY: Integer;
+  Phase: Double;
+  RightX: Double;
+  SourcePixel: PByte;
+  SourceRow: PByte;
+  SourceX: Integer;
+  X: Integer;
+begin
+  if not FPreviewEnabled or (FBackground.Width <= 0) or
+    (FBackground.Height <= 0) then
+    Exit;
+  if (FPreviewBitmap.Width <> FBackground.Width) or
+    (FPreviewBitmap.Height <> FBackground.Height) then
+    FPreviewBitmap.SetSize(FBackground.Width, FBackground.Height);
+
+  Phase := ((GetTickCount64 - FPreviewStartedTick) mod
+    PREVIEW_CYCLE_MS) / PREVIEW_CYCLE_MS * 2 * Pi;
+  BreathAmount := 0.5 - 0.5 * Cos(Phase);
+  CenterX := FGuidePoints[bgpChest].X;
+  LeftX := FGuidePoints[bgpLeftShoulder].X;
+  RightX := FGuidePoints[bgpRightShoulder].X;
+  ChestWidth := Max(0.05, (RightX - LeftX) * 0.42);
+  AbdomenWidth := ChestWidth * 0.72;
+
+  for LogicalY := 0 to FBackground.Height - 1 do
+  begin
+    ImageY := LogicalY / Max(1, FBackground.Height - 1);
+    if ImageY <= FGuidePoints[bgpChest].Y then
+      ChestInfluence := 1 - Abs(ImageY - FGuidePoints[bgpChest].Y) /
+        Max(0.001, FGuidePoints[bgpChest].Y -
+        FGuidePoints[bgpNeck].Y)
+    else
+      ChestInfluence := 1 - (ImageY - FGuidePoints[bgpChest].Y) /
+        Max(0.001, (FGuidePoints[bgpWaist].Y -
+        FGuidePoints[bgpChest].Y) * 0.55);
+    ChestInfluence := EnsureRange(ChestInfluence, 0.0, 1.0);
+
+    if ImageY < FGuidePoints[bgpChest].Y then
+      AbdomenInfluence := 0
+    else
+    begin
+      AbdomenInfluence := (ImageY - FGuidePoints[bgpChest].Y) /
+        Max(0.001, FGuidePoints[bgpWaist].Y -
+        FGuidePoints[bgpChest].Y);
+      AbdomenInfluence := 1 - Abs(AbdomenInfluence * 2 - 1);
+      AbdomenInfluence := EnsureRange(AbdomenInfluence, 0.0, 1.0);
+    end;
+
+    SourceRow := FBackground.ScanLine[FBackground.Height - 1 - LogicalY];
+    DestinationRow := FPreviewBitmap.ScanLine[
+      FPreviewBitmap.Height - 1 - LogicalY];
+    for X := 0 to FBackground.Width - 1 do
+    begin
+      ImageX := X / Max(1, FBackground.Width - 1);
+      HorizontalInfluence := 1 - Abs(ImageX - CenterX) /
+        Max(0.001, ChestWidth);
+      HorizontalInfluence := EnsureRange(HorizontalInfluence, 0.0, 1.0);
+      Influence := CHEST_EXPANSION * ChestInfluence *
+        HorizontalInfluence;
+      HorizontalInfluence := 1 - Abs(ImageX - CenterX) /
+        Max(0.001, AbdomenWidth);
+      HorizontalInfluence := EnsureRange(HorizontalInfluence, 0.0, 1.0);
+      Influence := Influence + ABDOMEN_EXPANSION * AbdomenInfluence *
+        HorizontalInfluence;
+      Displacement := (ImageX - CenterX) * Influence * BreathAmount;
+      SourceX := EnsureRange(Round((ImageX - Displacement) *
+        (FBackground.Width - 1)), 0, FBackground.Width - 1);
+      SourcePixel := SourceRow + SourceX * 4;
+      DestinationPixel := DestinationRow + X * 4;
+      DestinationPixel[0] := SourcePixel[0];
+      DestinationPixel[1] := SourcePixel[1];
+      DestinationPixel[2] := SourcePixel[2];
+      DestinationPixel[3] := SourcePixel[3];
+    end;
+  end;
+  PreviewPaintBox.Invalidate;
+end;
+
+procedure TFormBreathSettings.UpdateEditorControls;
+var
+  Kind: TBreathGuidePoint;
+begin
+  FEditButton.Default := FEditMode = bemGuide;
+  FPanButton.Default := FEditMode = bemPan;
+  if FSelectedPoint >= 0 then
+  begin
+    Kind := TBreathGuidePoint(FSelectedPoint);
+    FSelectionLabel.Caption := #$9078#$629E + ': ' + GuidePointName(Kind);
+    FPositionLabel.Caption := Format('X: %.1f%%'#13#10'Y: %.1f%%'#13#10#13#10,
+      [FGuidePoints[Kind].X * 100, FGuidePoints[Kind].Y * 100]) +
+      #$56DB#$89D2#$3044#$70B9#$3092#$30C9#$30E9#$30C3#$30B0#$3057#$3066 +
+      #$4F4D#$7F6E#$3092#$8ABF#$6574#$3057#$307E#$3059#$3002;
+  end
+  else
+  begin
+    FSelectionLabel.Caption := #$672A#$9078#$629E;
+    FPositionLabel.Caption := #$7DE8#$96C6#$3059#$308B#$70B9#$3092 +
+      #$9078#$629E#$3057#$3066#$304F#$3060#$3055#$3044#$3002;
+  end;
+  UpdateStatus;
+end;
+
+function TFormBreathSettings.DestinationRect: TRect;
+var
+  DrawHeight: Integer;
+  DrawWidth: Integer;
+  Scale: Double;
+begin
+  Result := PreviewPaintBox.ClientRect;
+  if (FBackground.Width <= 0) or (FBackground.Height <= 0) then
+    Exit;
+  if FFitToWindow then
+    Scale := Min(PreviewPaintBox.ClientWidth / FBackground.Width,
+      PreviewPaintBox.ClientHeight / FBackground.Height)
+  else
+    Scale := FZoomPercent / 100.0;
+  DrawWidth := Max(1, Round(FBackground.Width * Scale));
+  DrawHeight := Max(1, Round(FBackground.Height * Scale));
+  Result.Left := (PreviewPaintBox.ClientWidth - DrawWidth) div 2 + FOffset.X;
+  Result.Top := (PreviewPaintBox.ClientHeight - DrawHeight) div 2 + FOffset.Y;
+  Result.Right := Result.Left + DrawWidth;
+  Result.Bottom := Result.Top + DrawHeight;
+end;
+
+procedure TFormBreathSettings.FitImage;
+begin
+  FFitToWindow := True;
+  FOffset := Point(0, 0);
+  UpdateStatus;
+  PreviewPaintBox.Invalidate;
+end;
+
+procedure TFormBreathSettings.FormCreate(Sender: TObject);
+begin
+  FBackground := Vcl.Graphics.TBitmap.Create;
+  FBackground.PixelFormat := pf32bit;
+  FPreviewBitmap := Vcl.Graphics.TBitmap.Create;
+  FPreviewBitmap.PixelFormat := pf32bit;
+  FPreviewTimer := TTimer.Create(Self);
+  FPreviewTimer.Enabled := False;
+  FPreviewTimer.Interval := 80;
+  FPreviewTimer.OnTimer := PreviewTimerTick;
+  FZoomPercent := 100;
+  FFitToWindow := True;
+  FOffset := Point(0, 0);
+  FEditMode := bemGuide;
+  FSelectedPoint := -1;
+  DoubleBuffered := True;
+  TControlAccess(PreviewPaintBox).ControlStyle :=
+    TControlAccess(PreviewPaintBox).ControlStyle + [csOpaque];
+  CreateEditorControls;
+  ResetGuide;
+end;
+
+procedure TFormBreathSettings.FormDestroy(Sender: TObject);
+begin
+  FPreviewTimer.Enabled := False;
+  FPreviewTimer.Free;
+  FPreviewBitmap.Free;
+  FBackground.Free;
+end;
+
+procedure TFormBreathSettings.FormMouseWheel(Sender: TObject;
+  Shift: TShiftState; WheelDelta: Integer; MousePos: TPoint;
+  var Handled: Boolean);
+begin
+  if WheelDelta > 0 then
+    Inc(FZoomPercent, 25)
+  else
+    Dec(FZoomPercent, 25);
+  FZoomPercent := EnsureRange(FZoomPercent, 25, 400);
+  FFitToWindow := False;
+  UpdateStatus;
+  PreviewPaintBox.Invalidate;
+  Handled := True;
+end;
+
+procedure TFormBreathSettings.PreviewPaintBoxDblClick(Sender: TObject);
+begin
+  FitImage;
+end;
+
+procedure TFormBreathSettings.PreviewPaintBoxMouseDown(Sender: TObject;
+  Button: TMouseButton; Shift: TShiftState; X, Y: Integer);
+var
+  HitIndex: Integer;
+begin
+  if (Button = mbLeft) and (FEditMode = bemGuide) then
+  begin
+    HitIndex := HitTestGuidePoint(X, Y);
+    if HitIndex >= 0 then
+    begin
+      FSelectedPoint := HitIndex;
+      FGuideDragging := True;
+      TControlAccess(PreviewPaintBox).MouseCapture := True;
+      PreviewPaintBox.Cursor := crSizeAll;
+      UpdateEditorControls;
+      PreviewPaintBox.Invalidate;
+      Exit;
+    end;
+  end;
+  if not ((Button = mbMiddle) or
+    (Button = mbLeft)) then
+    Exit;
+  FDragging := True;
+  FDragOrigin := Point(X, Y);
+  FOffsetOrigin := FOffset;
+  TControlAccess(PreviewPaintBox).MouseCapture := True;
+  PreviewPaintBox.Cursor := crSizeAll;
+end;
+
+procedure TFormBreathSettings.PreviewPaintBoxMouseMove(Sender: TObject;
+  Shift: TShiftState; X, Y: Integer);
+var
+  Position: TPointF;
+begin
+  if FGuideDragging and (FSelectedPoint >= 0) then
+  begin
+    if CanvasToNormalized(X, Y, Position) then
+    begin
+      SetGuidePoint(TBreathGuidePoint(FSelectedPoint), Position);
+      UpdateEditorControls;
+      PreviewPaintBox.Invalidate;
+    end;
+    Exit;
+  end;
+  if not FDragging then
+    Exit;
+  FOffset.X := FOffsetOrigin.X + X - FDragOrigin.X;
+  FOffset.Y := FOffsetOrigin.Y + Y - FDragOrigin.Y;
+  PreviewPaintBox.Invalidate;
+end;
+
+procedure TFormBreathSettings.PreviewPaintBoxMouseUp(Sender: TObject;
+  Button: TMouseButton; Shift: TShiftState; X, Y: Integer);
+begin
+  if FGuideDragging then
+  begin
+    FGuideDragging := False;
+    TControlAccess(PreviewPaintBox).MouseCapture := False;
+    PreviewPaintBox.Cursor := crDefault;
+    Exit;
+  end;
+  if not (Button in [mbLeft, mbMiddle]) then
+    Exit;
+  FDragging := False;
+  TControlAccess(PreviewPaintBox).MouseCapture := False;
+  PreviewPaintBox.Cursor := crDefault;
+end;
+
+procedure TFormBreathSettings.PreviewPaintBoxPaint(Sender: TObject);
+var
+  Destination: TRect;
+begin
+  PreviewPaintBox.Canvas.Brush.Color := clBlack;
+  PreviewPaintBox.Canvas.FillRect(PreviewPaintBox.ClientRect);
+  if (FBackground.Width <= 0) or (FBackground.Height <= 0) then
+    Exit;
+  Destination := DestinationRect;
+  SetStretchBltMode(PreviewPaintBox.Canvas.Handle, HALFTONE);
+  if FPreviewEnabled and (FPreviewBitmap.Width > 0) then
+    PreviewPaintBox.Canvas.StretchDraw(Destination, FPreviewBitmap)
+  else
+    PreviewPaintBox.Canvas.StretchDraw(Destination, FBackground);
+  DrawGuide(PreviewPaintBox.Canvas);
+end;
+
+procedure TFormBreathSettings.SetBackgroundRgba(const Pixels: TBytes;
+  Width, Height: Integer);
+var
+  Destination: PByte;
+  Source: PByte;
+  X: Integer;
+  Y: Integer;
+begin
+  if (Width <= 0) or (Height <= 0) or
+    (Length(Pixels) <> NativeInt(Width) * Height * 4) then
+    Exit;
+  FBackground.SetSize(Width, Height);
+  Source := @Pixels[0];
+  for Y := 0 to Height - 1 do
+  begin
+    Destination := FBackground.ScanLine[Y];
+    for X := 0 to Width - 1 do
+    begin
+      Destination[0] := Source[2];
+      Destination[1] := Source[1];
+      Destination[2] := Source[0];
+      Destination[3] := Source[3];
+      Inc(Destination, 4);
+      Inc(Source, 4);
+    end;
+  end;
+  if FPreviewEnabled then
+    UpdateBreathPreview;
+  FitImage;
+end;
+
+procedure TFormBreathSettings.SetCaptureStatus(const Value: string);
+begin
+  StatusLabel.Hint := Value;
+  UpdateStatus;
+end;
+
+procedure TFormBreathSettings.UpdateStatus;
+var
+  ViewText: string;
+begin
+  if FFitToWindow then
+    ViewText := #$5168#$4F53#$8868#$793A
+  else
+    ViewText := Format('%d%%', [FZoomPercent]);
+  if StatusLabel.Hint <> '' then
+    StatusLabel.Caption := StatusLabel.Hint + '  |  ' + ViewText + '  |  ' +
+      #$30DB#$30A4#$30FC#$30EB + ': ' + #$62E1#$5927#$7E2E#$5C0F +
+      ' / ' + #$5DE6#$30C9#$30E9#$30C3#$30B0 + ': ' +
+      #$70B9#$306F#$30AC#$30A4#$30C9 + #$79FB#$52D5 +
+      #$3001#$7A7A#$6240#$306F#$8868#$793A#$79FB#$52D5 + ' / ' +
+      #$4E2D#$30C9#$30E9#$30C3#$30B0 + ': ' + #$8868#$793A#$79FB#$52D5 +
+      ' / ' + #$30C0#$30D6#$30EB#$30AF#$30EA#$30C3#$30AF + ': ' +
+      #$5168#$4F53#$8868#$793A
+  else
+    StatusLabel.Caption := ViewText;
+end;
+
+function TFormBreathSettings.TryLoadGuideDataText(const Text: string;
+  out ErrorText: string): Boolean;
+var
+  FormatSettings: TFormatSettings;
+  Kind: TBreathGuidePoint;
+  Parts: TStringList;
+  ValueIndex: Integer;
+  X: Double;
+  Y: Double;
+begin
+  Result := False;
+  ErrorText := '';
+  if Text = '' then
+  begin
+    ResetGuide;
+    Exit(True);
+  end;
+  Parts := TStringList.Create;
+  try
+    Parts.StrictDelimiter := True;
+    Parts.Delimiter := ';';
+    Parts.DelimitedText := Text;
+    if (Parts.Count <> 13) or (Parts[0] <> 'SBR1') then
+    begin
+      ErrorText := 'Invalid guide data format.';
+      Exit;
+    end;
+    FormatSettings := TFormatSettings.Create('en-US');
+    ValueIndex := 1;
+    for Kind := Low(TBreathGuidePoint) to High(TBreathGuidePoint) do
+    begin
+      if not TryStrToFloat(Parts[ValueIndex], X, FormatSettings) or
+        not TryStrToFloat(Parts[ValueIndex + 1], Y, FormatSettings) or
+        (X < 0) or (X > 1) or (Y < 0) or (Y > 1) then
+      begin
+        ErrorText := 'Invalid guide coordinate.';
+        Exit;
+      end;
+      FGuidePoints[Kind] := PointF(X, Y);
+      Inc(ValueIndex, 2);
+    end;
+    if FGuidePoints[bgpHead].Y >= FGuidePoints[bgpNeck].Y then
+    begin
+      ErrorText := 'Invalid head and neck order.';
+      Exit;
+    end;
+    if FGuidePoints[bgpNeck].Y >= FGuidePoints[bgpChest].Y then
+    begin
+      ErrorText := 'Invalid neck and chest order.';
+      Exit;
+    end;
+    if FGuidePoints[bgpChest].Y >= FGuidePoints[bgpWaist].Y then
+    begin
+      ErrorText := 'Invalid chest and waist order.';
+      Exit;
+    end;
+    if (FGuidePoints[bgpLeftShoulder].X >= FGuidePoints[bgpChest].X) or
+      (FGuidePoints[bgpRightShoulder].X <= FGuidePoints[bgpChest].X) then
+    begin
+      ErrorText := 'Invalid shoulder order.';
+      Exit;
+    end;
+    FSelectedPoint := Ord(bgpChest);
+    UpdateEditorControls;
+    PreviewPaintBox.Invalidate;
+    Result := True;
+  finally
+    Parts.Free;
+  end;
+end;
+
+function TFormBreathSettings.TrySaveGuideDataText(out Text,
+  ErrorText: string): Boolean;
+var
+  FormatSettings: TFormatSettings;
+  Kind: TBreathGuidePoint;
+begin
+  FormatSettings := TFormatSettings.Create('en-US');
+  Text := 'SBR1';
+  for Kind := Low(TBreathGuidePoint) to High(TBreathGuidePoint) do
+    Text := Text + ';' + FormatFloat('0.000000', FGuidePoints[Kind].X,
+      FormatSettings) + ';' + FormatFloat('0.000000', FGuidePoints[Kind].Y,
+      FormatSettings);
+  Result := Length(Text) <= 32767;
+  if Result then
+    ErrorText := ''
+  else
+  begin
+    Text := '';
+    ErrorText := 'Guide data is too long.';
+  end;
+end;
+
+end.
