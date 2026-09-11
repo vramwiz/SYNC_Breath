@@ -1,11 +1,13 @@
-library SYNC_Breath;
+﻿library SYNC_Breath;
 
 {$ALIGN 8}
 
 uses
   Winapi.Windows,
-  AviUtl2FilterTypes in '..\Syncroh2\AviUtl\Filter\AviUtl2FilterTypes.pas',
-  PluginFilterTable in '..\Syncroh2\Plugin_Filter\PluginFilterTable.pas',
+  AviUtl2FilterTypes in 'Source\Lib\AviUtl2FilterTypes.pas',
+  PluginFilterTable in 'Source\Lib\PluginFilterTable.pas',
+  SYNC_Breath_LastFrameCapture in 'Source\Common\Render\SYNC_Breath_LastFrameCapture.pas',
+  SYNC_Breath_SettingsForm in 'Source\Plugin\Filter\SYNC_Breath_SettingsForm.pas' {FormBreathSettings},
   SYNC_Breath_FilterPlugin in 'Source\Plugin\Filter\SYNC_Breath_FilterPlugin.pas';
 
 function InitializePlugin(Version: DWORD): Byte; cdecl;
