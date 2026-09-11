@@ -10,6 +10,7 @@ uses
   SYNC_Breath_RuntimeSettings in 'Source\Common\Settings\SYNC_Breath_RuntimeSettings.pas',
   SYNC_Breath_GuideData in 'Source\Common\Settings\SYNC_Breath_GuideData.pas',
   SYNC_Breath_RuntimeDeformer in 'Source\Common\Render\SYNC_Breath_RuntimeDeformer.pas',
+  SYNC_Breath_GpuDeformer in 'Source\Common\Render\SYNC_Breath_GpuDeformer.pas',
   SYNC_Breath_LastFrameCapture in 'Source\Common\Render\SYNC_Breath_LastFrameCapture.pas',
   SYNC_Breath_SettingsForm in 'Source\Plugin\Filter\SYNC_Breath_SettingsForm.pas' {FormBreathSettings},
   SYNC_Breath_FilterPlugin in 'Source\Plugin\Filter\SYNC_Breath_FilterPlugin.pas';

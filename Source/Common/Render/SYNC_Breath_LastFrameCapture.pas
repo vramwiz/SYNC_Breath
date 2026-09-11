@@ -39,6 +39,7 @@ var
   CaptureStagingTexture: ID3D11Texture2D;
   CaptureStatus: string;
   CaptureWidth: Integer;
+  LastCaptureTick: UInt64;
 
 function BytesPerPixel(Format: DXGI_FORMAT): Integer;
 begin
@@ -130,6 +131,10 @@ procedure FinalizeLastFrameCapture;
 begin
   if not CaptureInitialized then
     Exit;
+  // The settings image need not force a GPU-to-CPU synchronization every frame.
+  if GetTickCount64 - LastCaptureTick < 500 then
+    Exit;
+  LastCaptureTick := GetTickCount64;
   EnterCriticalSection(CaptureLock);
   try
     ClearCapture;

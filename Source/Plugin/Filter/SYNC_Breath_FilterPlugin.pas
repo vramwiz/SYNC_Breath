@@ -22,6 +22,7 @@ uses
   SYNC_Breath_DebugLog,
   SYNC_Breath_RuntimeSettings,
   SYNC_Breath_RuntimeDeformer,
+  SYNC_Breath_GpuDeformer,
   SYNC_Breath_LastFrameCapture,
   SYNC_Breath_SettingsForm;
 
@@ -29,16 +30,28 @@ var
   SettingsButton: TFILTER_ITEM_BUTTON;
   InternalDataGroup: TFILTER_ITEM_GROUP;
   GuideDataItem: TFILTER_ITEM_STRING;
+  CpuFallbackLogged: Boolean;
 
 function ProcessBreathVideo(Video: PFILTER_PROC_VIDEO): Byte; cdecl;
 var
+  ErrorText: string;
   GuideText: string;
+  Settings: TBreathRuntimeSettings;
 begin
   CaptureLastFrame(Video);
   GuideText := '';
   if Assigned(GuideDataItem.Value) then
     GuideText := string(GuideDataItem.Value);
-  ApplyBreathToVideo(Video, GuideText, CurrentBreathRuntimeSettings);
+  Settings := CurrentBreathRuntimeSettings;
+  if not ApplyBreathGpu(Video, GuideText, Settings, ErrorText) then
+  begin
+    if not CpuFallbackLogged then
+    begin
+      DebugLog('Runtime deformation GPU fallback: ' + ErrorText);
+      CpuFallbackLogged := True;
+    end;
+    ApplyBreathToVideo(Video, GuideText, Settings);
+  end;
   Result := 1;
 end;
 
@@ -130,12 +143,14 @@ begin
   DebugLog(Format('InitializeBreathPlugin: host version=%d.', [Version]));
   InitializeLastFrameCapture;
   InitializeRuntimeDeformer;
+  InitializeGpuDeformer;
   Result := 1;
 end;
 
 procedure FinalizeBreathPlugin;
 begin
   DebugLog('FinalizeBreathPlugin.');
+  FinalizeGpuDeformer;
   FinalizeRuntimeDeformer;
   FinalizeLastFrameCapture;
 end;

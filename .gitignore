@@ -1,6 +1,10 @@
 *.~* 
 __history/ 
 *.dcu 
+*.rsm
+*.cso
+Win32/
+Win64/
 *.local 
 *.identcache 
 *.exe 
