@@ -26,6 +26,8 @@ uses
 {$R 'Shader\SYNC_Breath_Compute.res'}
 
 type
+  TWordArray = array[0..7] of Word;
+  PWordArray = ^TWordArray;
   TConstants = packed record
     Width, Height: Cardinal;
     Breath, Padding: Single;
@@ -45,7 +47,9 @@ var
   GInitialized: Boolean;
   GLoggedGpu: Boolean;
   GOutput: ID3D11Texture2D;
+  GOutputPixels: TBytes;
   GOutputView: ID3D11UnorderedAccessView;
+  GReadback: ID3D11Texture2D;
   GShader: ID3D11ComputeShader;
   GWidth: Integer;
 
@@ -54,8 +58,10 @@ begin
   GBuffer := nil;
   GShader := nil;
   GOutputView := nil;
+  GReadback := nil;
   GInputView := nil;
   GOutput := nil;
+  GOutputPixels := nil;
   GInput := nil;
   GContext := nil;
   GDevice := nil;
@@ -122,6 +128,12 @@ begin
   begin ErrorText := 'Create output texture failed'; Exit; end;
   if Device.CreateUnorderedAccessView(GOutput, nil, GOutputView) < 0 then
   begin ErrorText := 'Create UAV failed'; Exit; end;
+  Desc.Usage := D3D11_USAGE_STAGING;
+  Desc.BindFlags := 0;
+  Desc.CPUAccessFlags := D3D11_CPU_ACCESS_READ;
+  if Device.CreateTexture2D(Desc, nil, GReadback) < 0 then
+  begin ErrorText := 'Create readback texture failed'; Exit; end;
+  SetLength(GOutputPixels, NativeInt(Desc.Width) * Desc.Height * 4);
   FillChar(BD, SizeOf(BD), 0);
   BD.ByteWidth := SizeOf(TConstants);
   BD.Usage := D3D11_USAGE_DEFAULT;
@@ -135,30 +147,62 @@ begin
   Result := True;
 end;
 
+function HalfToSingle(Value: Word): Single;
+var
+  E: Integer;
+  M, Bits, Sign: Cardinal;
+begin
+  Sign := Cardinal(Value and $8000) shl 16;
+  E := (Value shr 10) and $1F;
+  M := Value and $03FF;
+  if E = 0 then
+  begin
+    if M = 0 then Bits := Sign
+    else
+    begin
+      E := -14;
+      while (M and $0400) = 0 do begin M := M shl 1; Dec(E); end;
+      Bits := Sign or Cardinal(E + 127) shl 23 or (M and $03FF) shl 13;
+    end;
+  end
+  else if E = $1F then Bits := Sign or $7F800000 or M shl 13
+  else Bits := Sign or Cardinal(E + 112) shl 23 or M shl 13;
+  Result := PSingle(@Bits)^;
+end;
+
+function FloatByte(Value: Single): Byte;
+begin
+  if IsNan(Value) or (Value <= 0) then Exit(0);
+  if Value >= 1 then Exit(255);
+  Result := Round(Value * 255);
+end;
+
 function ApplyBreathGpu(Video: PFILTER_PROC_VIDEO; const GuideText: string;
   const Settings: TBreathRuntimeSettings; out ErrorText: string): Boolean;
 var
   CommandList: ID3D11CommandList;
   C: TConstants;
-  Framebuffer, Source: ID3D11Texture2D;
+  Source: ID3D11Texture2D;
   Guide: TBreathGuidePoints;
   Immediate: ID3D11DeviceContext;
+  Mapped: TD3D11_MAPPED_SUBRESOURCE;
   NoSRV: ID3D11ShaderResourceView;
   NoUAV: ID3D11UnorderedAccessView;
   Phase, Wave: Double;
+  Dst, Src: PByte;
+  Words: PWordArray;
+  X, Y: Integer;
 begin
   Result := False;
   ErrorText := '';
   if not GInitialized or (Video = nil) or
     not Assigned(Video^.GetImageTexture2D) or
-    not Assigned(Video^.GetFramebufferTexture2D) then Exit;
+    not Assigned(Video^.SetImageData) then Exit;
   EnterCriticalSection(GLock);
   try
     try
       Source := ID3D11Texture2D(Video^.GetImageTexture2D());
-      Framebuffer := ID3D11Texture2D(Video^.GetFramebufferTexture2D());
-      if (Source = nil) or (Framebuffer = nil) or
-        not EnsureResources(Source, ErrorText) then Exit;
+      if (Source = nil) or not EnsureResources(Source, ErrorText) then Exit;
       if not TryDecodeBreathGuide(GuideText, Guide, ErrorText) then Exit;
       Phase := Frac(Video^.Object_^.Time / Settings.PeriodSeconds +
         Settings.PhaseDegrees / 360) * 2 * Pi;
@@ -182,11 +226,43 @@ begin
       GContext.Dispatch((GWidth + 15) div 16, (GHeight + 15) div 16, 1);
       GContext.CSSetShaderResources(0, 1, NoSRV);
       GContext.CSSetUnorderedAccessViews(0, 1, NoUAV, nil);
-      GContext.CopyResource(Framebuffer, GOutput);
+      GContext.CopyResource(GReadback, GOutput);
       if GContext.FinishCommandList(False, CommandList) < 0 then
       begin ErrorText := 'FinishCommandList failed'; Exit; end;
       GDevice.GetImmediateContext(Immediate);
       Immediate.ExecuteCommandList(CommandList, True);
+      FillChar(Mapped, SizeOf(Mapped), 0);
+      if Immediate.Map(GReadback, 0, D3D11_MAP_READ, 0, Mapped) < 0 then
+      begin ErrorText := 'Map readback failed'; Exit; end;
+      try
+        Dst := @GOutputPixels[0];
+        for Y := 0 to GHeight - 1 do
+        begin
+          Src := PByte(NativeUInt(Mapped.pData) + NativeUInt(Y) *
+            Mapped.RowPitch);
+          if GFormat = DXGI_FORMAT_R8G8B8A8_UNORM then
+          begin
+            Move(Src^, Dst^, GWidth * 4);
+            Inc(Dst, GWidth * 4);
+          end
+          else
+          begin
+            Words := PWordArray(Src);
+            for X := 0 to GWidth - 1 do
+            begin
+              Dst[0] := FloatByte(HalfToSingle(Words[0]));
+              Dst[1] := FloatByte(HalfToSingle(Words[1]));
+              Dst[2] := FloatByte(HalfToSingle(Words[2]));
+              Dst[3] := FloatByte(HalfToSingle(Words[3]));
+              Words := PWordArray(PByte(Words) + 8);
+              Inc(Dst, 4);
+            end;
+          end;
+        end;
+      finally
+        Immediate.Unmap(GReadback, 0);
+      end;
+      Video^.SetImageData(PPIXEL_RGBA(@GOutputPixels[0]), GWidth, GHeight);
       if not GLoggedGpu then
       begin DebugLog('Runtime deformation path: D3D11 GPU.'); GLoggedGpu := True; end;
       Result := True;
