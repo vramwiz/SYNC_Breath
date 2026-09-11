@@ -19,6 +19,9 @@ uses
   Vcl.Dialogs,
   Vcl.Forms,
   PluginFilterTable,
+  SYNC_Breath_DebugLog,
+  SYNC_Breath_RuntimeSettings,
+  SYNC_Breath_RuntimeDeformer,
   SYNC_Breath_LastFrameCapture,
   SYNC_Breath_SettingsForm;
 
@@ -27,9 +30,15 @@ var
   InternalDataGroup: TFILTER_ITEM_GROUP;
   GuideDataItem: TFILTER_ITEM_STRING;
 
-function EmptyProcVideo(Video: PFILTER_PROC_VIDEO): Byte; cdecl;
+function ProcessBreathVideo(Video: PFILTER_PROC_VIDEO): Byte; cdecl;
+var
+  GuideText: string;
 begin
   CaptureLastFrame(Video);
+  GuideText := '';
+  if Assigned(GuideDataItem.Value) then
+    GuideText := string(GuideDataItem.Value);
+  ApplyBreathToVideo(Video, GuideText, CurrentBreathRuntimeSettings);
   Result := 1;
 end;
 
@@ -46,11 +55,18 @@ var
   Utf8DataText: UTF8String;
   Width: Integer;
 begin
+  DebugLog('Settings button callback entered.');
   try
     SettingsForm := TFormBreathSettings.Create(nil);
     try
       if CopyLastFrame(Pixels, Width, Height, Status) then
+      begin
+        DebugLog(Format('Last frame copied: %dx%d, %d bytes.',
+          [Width, Height, Length(Pixels)]));
         SettingsForm.SetBackgroundRgba(Pixels, Width, Height);
+      end
+      else
+        DebugLog('Last frame copy failed: ' + Status);
       SettingsForm.SetCaptureStatus(Status);
       CurrentDataText := '';
       if Assigned(GuideDataItem.Value) then
@@ -64,6 +80,7 @@ begin
         SettingsForm.TryLoadGuideDataText('', DataError);
       end;
       SettingsForm.ShowModal;
+      DebugLog('Settings form closed.');
       if not SettingsForm.TrySaveGuideDataText(SavedDataText,
         DataError) then
       begin
@@ -97,20 +114,29 @@ begin
     end;
   except
     on E: Exception do
+    begin
+      DebugLog('Settings callback exception: ' + E.ClassName + ': ' +
+        E.Message);
       MessageDlg(#$8A2D#$5B9A#$753B#$9762#$3067#$30A8#$30E9#$30FC +
         #$304C#$767A#$751F#$3057#$307E#$3057#$305F#$3002 + sLineBreak +
         E.Message, mtError, [mbOK], 0);
+    end;
   end;
 end;
 
 function InitializeBreathPlugin(Version: DWORD): Byte;
 begin
+  ResetDebugLog;
+  DebugLog(Format('InitializeBreathPlugin: host version=%d.', [Version]));
   InitializeLastFrameCapture;
+  InitializeRuntimeDeformer;
   Result := 1;
 end;
 
 procedure FinalizeBreathPlugin;
 begin
+  DebugLog('FinalizeBreathPlugin.');
+  FinalizeRuntimeDeformer;
   FinalizeLastFrameCapture;
 end;
 
@@ -118,6 +144,7 @@ function GetBreathFilterTable: PFILTER_PLUGIN_TABLE;
 begin
   if GTable.Name = nil then
   begin
+    AddBreathRuntimeItems;
     AddButton(SettingsButton, #$8A2D#$5B9A, SettingsButtonCallback);
     AddGroup(InternalDataGroup,
       #$5185#$90E8#$30C7#$30FC#$30BF, 0);
@@ -126,7 +153,7 @@ begin
     SetupPluginTable(FILTER_FLAG_VIDEO or FILTER_FLAG_FILTER,
       #$547C#$5438, 'SYNC',
       #$547C#$5438#$30D5#$30A3#$30EB#$30BF#$30FC#$30D7#$30E9#$30B0#$30A4#$30F3,
-      EmptyProcVideo, nil);
+      ProcessBreathVideo, nil);
   end;
   Result := @GTable;
 end;

@@ -12,6 +12,10 @@ procedure AddButton(var Item: TFILTER_ITEM_BUTTON; Name: PWideChar;
 procedure AddGroup(var Item: TFILTER_ITEM_GROUP; Name: PWideChar;
   DefaultVisible: Integer);
 procedure AddString(var Item: TFILTER_ITEM_STRING; Name, Value: PWideChar);
+procedure AddTrack(var Item: TFILTER_ITEM_TRACK; Name: PWideChar;
+  Value, S, E, Step: Double);
+procedure AddSelect(var Item: TFILTER_ITEM_SELECT; Name: PWideChar;
+  Value: Integer; List: PFILTER_ITEM_SELECT_ITEM);
 
 var
   GTable: TFILTER_PLUGIN_TABLE;
@@ -71,6 +75,36 @@ begin
   Item.ItemType := 'string';
   Item.Name := Name;
   Item.Value := Value;
+  Inc(ItemIndex);
+  Items[ItemIndex] := nil;
+end;
+
+procedure AddTrack(var Item: TFILTER_ITEM_TRACK; Name: PWideChar;
+  Value, S, E, Step: Double);
+begin
+  if ItemIndex >= MAX_GUI_ITEMS - 1 then
+    Exit;
+  Items[ItemIndex] := @Item;
+  Item.ItemType := 'track';
+  Item.Name := Name;
+  Item.Value := Value;
+  Item.S := S;
+  Item.E := E;
+  Item.Step := Step;
+  Inc(ItemIndex);
+  Items[ItemIndex] := nil;
+end;
+
+procedure AddSelect(var Item: TFILTER_ITEM_SELECT; Name: PWideChar;
+  Value: Integer; List: PFILTER_ITEM_SELECT_ITEM);
+begin
+  if ItemIndex >= MAX_GUI_ITEMS - 1 then
+    Exit;
+  Items[ItemIndex] := @Item;
+  Item.ItemType := 'select';
+  Item.Name := Name;
+  Item.Value := Value;
+  Item.List := List;
   Inc(ItemIndex);
   Items[ItemIndex] := nil;
 end;

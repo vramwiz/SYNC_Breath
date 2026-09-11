@@ -3,7 +3,7 @@
         <ProjectGuid>{918738A0-C3BB-4AD9-9D18-7C9307BA1E0A}</ProjectGuid>
         <ProjectVersion>20.4</ProjectVersion>
         <FrameworkType>None</FrameworkType>
-        <Config Condition="'$(Config)'==''">Release</Config>
+        <Config Condition="'$(Config)'==''">Debug</Config>
         <Platform Condition="'$(Platform)'==''">Win64</Platform>
         <ProjectName Condition="'$(ProjectName)'==''">SYNC_Breath</ProjectName>
         <TargetedPlatforms>2</TargetedPlatforms>
@@ -24,6 +24,12 @@
     <PropertyGroup Condition="'$(Config)'=='Debug' or '$(Cfg_1)'!=''">
         <Cfg_1>true</Cfg_1>
         <CfgParent>Base</CfgParent>
+        <Base>true</Base>
+    </PropertyGroup>
+    <PropertyGroup Condition="('$(Platform)'=='Win64' and '$(Cfg_1)'=='true') or '$(Cfg_1_Win64)'!=''">
+        <Cfg_1_Win64>true</Cfg_1_Win64>
+        <CfgParent>Cfg_1</CfgParent>
+        <Cfg_1>true</Cfg_1>
         <Base>true</Base>
     </PropertyGroup>
     <PropertyGroup Condition="'$(Config)'=='Release' or '$(Cfg_2)'!=''">
@@ -52,6 +58,9 @@
         <DCC_IntegerOverflowCheck>true</DCC_IntegerOverflowCheck>
         <DCC_RangeChecking>true</DCC_RangeChecking>
     </PropertyGroup>
+    <PropertyGroup Condition="'$(Cfg_1_Win64)'!=''">
+        <Debugger_HostApplication>D:\aviutl2_v2.1.3a\aviutl2.exe</Debugger_HostApplication>
+    </PropertyGroup>
     <PropertyGroup Condition="'$(Cfg_2)'!=''">
         <BT_BuildType>Release</BT_BuildType>
         <DCC_LocalDebugSymbols>false</DCC_LocalDebugSymbols>
@@ -68,6 +77,10 @@
         </DelphiCompile>
         <DCCReference Include="Source\Lib\AviUtl2FilterTypes.pas"/>
         <DCCReference Include="Source\Lib\PluginFilterTable.pas"/>
+        <DCCReference Include="Source\Common\Diagnostics\SYNC_Breath_DebugLog.pas"/>
+        <DCCReference Include="Source\Common\Settings\SYNC_Breath_RuntimeSettings.pas"/>
+        <DCCReference Include="Source\Common\Settings\SYNC_Breath_GuideData.pas"/>
+        <DCCReference Include="Source\Common\Render\SYNC_Breath_RuntimeDeformer.pas"/>
         <DCCReference Include="Source\Common\Render\SYNC_Breath_LastFrameCapture.pas"/>
         <DCCReference Include="Source\Plugin\Filter\SYNC_Breath_SettingsForm.pas">
             <Form>FormBreathSettings</Form>

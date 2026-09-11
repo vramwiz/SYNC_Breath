@@ -50,6 +50,7 @@ type
     B, G, R, X: Byte;
   end;
   PFILTER_ITEM_SELECT = ^TFILTER_ITEM_SELECT;
+  PFILTER_ITEM_SELECT_ITEM = ^TFILTER_ITEM_SELECT_ITEM;
   TFILTER_ITEM_SELECT_ITEM = record
     Name: LPCWSTR;
     Value: Integer;
@@ -58,7 +59,7 @@ type
     ItemType: LPCWSTR;
     Name: LPCWSTR;
     Value: Integer;
-    List: ^TFILTER_ITEM_SELECT_ITEM;
+    List: PFILTER_ITEM_SELECT_ITEM;
   end;
   PFILTER_ITEM_FILE = ^TFILTER_ITEM_FILE;
   TFILTER_ITEM_FILE = record

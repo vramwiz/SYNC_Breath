@@ -15,12 +15,10 @@ uses
   Vcl.ExtCtrls,
   Vcl.Forms,
   Vcl.Graphics,
-  Vcl.StdCtrls;
+  Vcl.StdCtrls,
+  SYNC_Breath_GuideData;
 
 type
-  TBreathGuidePoint = (bgpWaist, bgpChest, bgpNeck, bgpHead,
-    bgpLeftShoulder, bgpRightShoulder);
-  TBreathGuidePoints = array[TBreathGuidePoint] of TPointF;
   TBreathEditMode = (bemGuide, bemPan);
 
   TFormBreathSettings = class(TForm)
@@ -64,6 +62,9 @@ type
     FPreviewEnabled: Boolean;
     FPreviewStartedTick: UInt64;
     FPreviewTimer: TTimer;
+    FPreviewFrameCount: Integer;
+    FPreviewLastLogTick: UInt64;
+    FPreviewPaintLogged: Boolean;
     function DestinationRect: TRect;
     function CanvasToNormalized(X, Y: Integer;
       out Position: TPointF): Boolean;
@@ -96,7 +97,8 @@ implementation
 
 uses
   System.Math,
-  Winapi.Windows;
+  Winapi.Windows,
+  SYNC_Breath_DebugLog;
 
 {$R *.dfm}
 
@@ -416,32 +418,45 @@ end;
 
 procedure TFormBreathSettings.PreviewButtonClick(Sender: TObject);
 begin
+  DebugLog(Format('Preview button clicked: enabled=%s, background=%dx%d.',
+    [BoolToStr(FPreviewEnabled, True), FBackground.Width,
+    FBackground.Height]));
   FPreviewEnabled := not FPreviewEnabled;
   if FPreviewEnabled then
   begin
     FPreviewStartedTick := GetTickCount64 - 750;
     FPreviewTimer.Enabled := True;
+    FPreviewFrameCount := 0;
+    FPreviewLastLogTick := 0;
+    FPreviewPaintLogged := False;
     FPreviewButton.Caption := #$30D7#$30EC#$30D3#$30E5#$30FC#$505C#$6B62;
     UpdateBreathPreview;
+    DebugLog(Format('Preview started: timer enabled=%s, interval=%d ms.',
+      [BoolToStr(FPreviewTimer.Enabled, True), FPreviewTimer.Interval]));
   end
   else
   begin
     FPreviewTimer.Enabled := False;
     FPreviewButton.Caption := #$547C#$5438#$30D7#$30EC#$30D3#$30E5#$30FC;
     PreviewPaintBox.Invalidate;
+    DebugLog('Preview stopped.');
   end;
 end;
 
 procedure TFormBreathSettings.PreviewTimerTick(Sender: TObject);
 begin
+  if FPreviewFrameCount = 1 then
+    DebugLog('First preview timer tick received.');
   UpdateBreathPreview;
 end;
 
 procedure TFormBreathSettings.UpdateBreathPreview;
 const
   PREVIEW_CYCLE_MS: UInt64 = 3000;
-  CHEST_EXPANSION = 0.45;
-  ABDOMEN_EXPANSION = 0.22;
+  PREVIEW_MAX_WIDTH = 672;
+  PREVIEW_MAX_HEIGHT = 480;
+  CHEST_LIFT = 0.026;
+  ABDOMEN_LIFT = 0.012;
 var
   AbdomenInfluence: Double;
   AbdomenWidth: Double;
@@ -451,26 +466,51 @@ var
   ChestWidth: Double;
   DestinationPixel: PByte;
   DestinationRow: PByte;
-  Displacement: Double;
+  VerticalDisplacement: Double;
   HorizontalInfluence: Double;
+  UpperHorizontalInfluence: Double;
+  UpperInfluence: Double;
+  UpperWidth: Double;
   ImageX: Double;
   ImageY: Double;
   Influence: Double;
   LeftX: Double;
   LogicalY: Integer;
   Phase: Double;
+  PreviewHeight: Integer;
+  PreviewScale: Double;
+  PreviewWidth: Integer;
   RightX: Double;
   SourcePixel: PByte;
   SourceRow: PByte;
+  SourceBitmapY: Integer;
+  SourceImageY: Double;
   SourceX: Integer;
+  ChangedPixelCount: Integer;
+  FrameStartedTick: UInt64;
+  MaximumDisplacementPixels: Double;
+  NowTick: UInt64;
   X: Integer;
 begin
   if not FPreviewEnabled or (FBackground.Width <= 0) or
     (FBackground.Height <= 0) then
+  begin
+    DebugLog(Format('Preview update skipped: enabled=%s, background=%dx%d.',
+      [BoolToStr(FPreviewEnabled, True), FBackground.Width,
+      FBackground.Height]));
     Exit;
-  if (FPreviewBitmap.Width <> FBackground.Width) or
-    (FPreviewBitmap.Height <> FBackground.Height) then
-    FPreviewBitmap.SetSize(FBackground.Width, FBackground.Height);
+  end;
+  FrameStartedTick := GetTickCount64;
+  Inc(FPreviewFrameCount);
+  ChangedPixelCount := 0;
+  MaximumDisplacementPixels := 0;
+  PreviewScale := Min(1.0, Min(PREVIEW_MAX_WIDTH / FBackground.Width,
+    PREVIEW_MAX_HEIGHT / FBackground.Height));
+  PreviewWidth := Max(1, Round(FBackground.Width * PreviewScale));
+  PreviewHeight := Max(1, Round(FBackground.Height * PreviewScale));
+  if (FPreviewBitmap.Width <> PreviewWidth) or
+    (FPreviewBitmap.Height <> PreviewHeight) then
+    FPreviewBitmap.SetSize(PreviewWidth, PreviewHeight);
 
   Phase := ((GetTickCount64 - FPreviewStartedTick) mod
     PREVIEW_CYCLE_MS) / PREVIEW_CYCLE_MS * 2 * Pi;
@@ -478,12 +518,14 @@ begin
   CenterX := FGuidePoints[bgpChest].X;
   LeftX := FGuidePoints[bgpLeftShoulder].X;
   RightX := FGuidePoints[bgpRightShoulder].X;
-  ChestWidth := Max(0.05, (RightX - LeftX) * 0.42);
-  AbdomenWidth := ChestWidth * 0.72;
+  ChestWidth := Max(0.08, (RightX - LeftX) * 0.52);
+  AbdomenWidth := ChestWidth * 0.82;
 
-  for LogicalY := 0 to FBackground.Height - 1 do
+  for LogicalY := 0 to PreviewHeight - 1 do
   begin
-    ImageY := LogicalY / Max(1, FBackground.Height - 1);
+    // AviUtl2 capture rows and VCL bitmap scanlines use the opposite Y origin.
+    // Convert the processed bitmap row back to the guide's top-origin Y value.
+    ImageY := 1.0 - LogicalY / Max(1, PreviewHeight - 1);
     if ImageY <= FGuidePoints[bgpChest].Y then
       ChestInfluence := 1 - Abs(ImageY - FGuidePoints[bgpChest].Y) /
         Max(0.001, FGuidePoints[bgpChest].Y -
@@ -493,6 +535,25 @@ begin
         Max(0.001, (FGuidePoints[bgpWaist].Y -
         FGuidePoints[bgpChest].Y) * 0.55);
     ChestInfluence := EnsureRange(ChestInfluence, 0.0, 1.0);
+
+    if ImageY < FGuidePoints[bgpHead].Y then
+      UpperInfluence := 0.18 * EnsureRange(1 -
+        (FGuidePoints[bgpHead].Y - ImageY) /
+        Max(0.001, FGuidePoints[bgpNeck].Y -
+        FGuidePoints[bgpHead].Y), 0.0, 1.0)
+    else if ImageY < FGuidePoints[bgpNeck].Y then
+      UpperInfluence := 0.18 + 0.22 *
+        (ImageY - FGuidePoints[bgpHead].Y) /
+        Max(0.001, FGuidePoints[bgpNeck].Y -
+        FGuidePoints[bgpHead].Y)
+    else if ImageY < FGuidePoints[bgpChest].Y then
+      UpperInfluence := 0.40 + 0.60 *
+        (ImageY - FGuidePoints[bgpNeck].Y) /
+        Max(0.001, FGuidePoints[bgpChest].Y -
+        FGuidePoints[bgpNeck].Y)
+    else
+      UpperInfluence := 0;
+    UpperInfluence := EnsureRange(UpperInfluence, 0.0, 1.0);
 
     if ImageY < FGuidePoints[bgpChest].Y then
       AbdomenInfluence := 0
@@ -505,25 +566,42 @@ begin
       AbdomenInfluence := EnsureRange(AbdomenInfluence, 0.0, 1.0);
     end;
 
-    SourceRow := FBackground.ScanLine[FBackground.Height - 1 - LogicalY];
     DestinationRow := FPreviewBitmap.ScanLine[
-      FPreviewBitmap.Height - 1 - LogicalY];
-    for X := 0 to FBackground.Width - 1 do
+      PreviewHeight - 1 - LogicalY];
+    for X := 0 to PreviewWidth - 1 do
     begin
-      ImageX := X / Max(1, FBackground.Width - 1);
+      ImageX := X / Max(1, PreviewWidth - 1);
       HorizontalInfluence := 1 - Abs(ImageX - CenterX) /
         Max(0.001, ChestWidth);
       HorizontalInfluence := EnsureRange(HorizontalInfluence, 0.0, 1.0);
-      Influence := CHEST_EXPANSION * ChestInfluence *
-        HorizontalInfluence;
+      Influence := CHEST_LIFT * ChestInfluence * HorizontalInfluence;
+      UpperWidth := ChestWidth * (0.48 + 0.52 * EnsureRange(
+        (ImageY - FGuidePoints[bgpHead].Y) /
+        Max(0.001, FGuidePoints[bgpChest].Y -
+        FGuidePoints[bgpHead].Y), 0.0, 1.0));
+      UpperHorizontalInfluence := 1 - Abs(ImageX - CenterX) /
+        Max(0.001, UpperWidth);
+      UpperHorizontalInfluence := EnsureRange(UpperHorizontalInfluence,
+        0.0, 1.0);
+      Influence := Max(Influence, CHEST_LIFT * UpperInfluence *
+        UpperHorizontalInfluence);
       HorizontalInfluence := 1 - Abs(ImageX - CenterX) /
         Max(0.001, AbdomenWidth);
       HorizontalInfluence := EnsureRange(HorizontalInfluence, 0.0, 1.0);
-      Influence := Influence + ABDOMEN_EXPANSION * AbdomenInfluence *
+      Influence := Influence + ABDOMEN_LIFT * AbdomenInfluence *
         HorizontalInfluence;
-      Displacement := (ImageX - CenterX) * Influence * BreathAmount;
-      SourceX := EnsureRange(Round((ImageX - Displacement) *
-        (FBackground.Width - 1)), 0, FBackground.Width - 1);
+      VerticalDisplacement := Influence * BreathAmount;
+      SourceImageY := EnsureRange(ImageY + VerticalDisplacement,
+        0.0, 1.0);
+      SourceBitmapY := EnsureRange(Round(SourceImageY *
+        (FBackground.Height - 1)), 0, FBackground.Height - 1);
+      SourceRow := FBackground.ScanLine[SourceBitmapY];
+      if SourceBitmapY <> Round(ImageY * (FBackground.Height - 1)) then
+        Inc(ChangedPixelCount);
+      MaximumDisplacementPixels := Max(MaximumDisplacementPixels,
+        Abs(SourceBitmapY - Round(ImageY * (FBackground.Height - 1))));
+      SourceX := EnsureRange(Round(ImageX * (FBackground.Width - 1)),
+        0, FBackground.Width - 1);
       SourcePixel := SourceRow + SourceX * 4;
       DestinationPixel := DestinationRow + X * 4;
       DestinationPixel[0] := SourcePixel[0];
@@ -531,6 +609,16 @@ begin
       DestinationPixel[2] := SourcePixel[2];
       DestinationPixel[3] := SourcePixel[3];
     end;
+  end;
+  NowTick := GetTickCount64;
+  if (FPreviewFrameCount = 1) or (NowTick - FPreviewLastLogTick >= 1000) then
+  begin
+    DebugLog(Format('Preview frame=%d phase=%.3f breath=%.3f changed=%d '+
+      'max-vertical-displacement=%.1f px processing=%d ms bitmap=%dx%d.',
+      [FPreviewFrameCount, Phase, BreathAmount, ChangedPixelCount,
+      MaximumDisplacementPixels, NowTick - FrameStartedTick,
+      FPreviewBitmap.Width, FPreviewBitmap.Height]));
+    FPreviewLastLogTick := NowTick;
   end;
   PreviewPaintBox.Invalidate;
 end;
@@ -591,6 +679,7 @@ end;
 
 procedure TFormBreathSettings.FormCreate(Sender: TObject);
 begin
+  DebugLog('Settings form FormCreate entered.');
   FBackground := Vcl.Graphics.TBitmap.Create;
   FBackground.PixelFormat := pf32bit;
   FPreviewBitmap := Vcl.Graphics.TBitmap.Create;
@@ -609,10 +698,12 @@ begin
     TControlAccess(PreviewPaintBox).ControlStyle + [csOpaque];
   CreateEditorControls;
   ResetGuide;
+  DebugLog('Settings form initialized.');
 end;
 
 procedure TFormBreathSettings.FormDestroy(Sender: TObject);
 begin
+  DebugLog('Settings form FormDestroy entered.');
   FPreviewTimer.Enabled := False;
   FPreviewTimer.Free;
   FPreviewBitmap.Free;
@@ -711,6 +802,13 @@ procedure TFormBreathSettings.PreviewPaintBoxPaint(Sender: TObject);
 var
   Destination: TRect;
 begin
+  if not FPreviewPaintLogged then
+  begin
+    DebugLog(Format('Preview paint: enabled=%s, preview=%dx%d, background=%dx%d.',
+      [BoolToStr(FPreviewEnabled, True), FPreviewBitmap.Width,
+      FPreviewBitmap.Height, FBackground.Width, FBackground.Height]));
+    FPreviewPaintLogged := True;
+  end;
   PreviewPaintBox.Canvas.Brush.Color := clBlack;
   PreviewPaintBox.Canvas.FillRect(PreviewPaintBox.ClientRect);
   if (FBackground.Width <= 0) or (FBackground.Height <= 0) then
@@ -732,9 +830,14 @@ var
   X: Integer;
   Y: Integer;
 begin
+  DebugLog(Format('SetBackgroundRgba called: %dx%d, %d bytes.',
+    [Width, Height, Length(Pixels)]));
   if (Width <= 0) or (Height <= 0) or
     (Length(Pixels) <> NativeInt(Width) * Height * 4) then
+  begin
+    DebugLog('SetBackgroundRgba rejected invalid dimensions or byte count.');
     Exit;
+  end;
   FBackground.SetSize(Width, Height);
   Source := @Pixels[0];
   for Y := 0 to Height - 1 do
@@ -753,6 +856,7 @@ begin
   if FPreviewEnabled then
     UpdateBreathPreview;
   FitImage;
+  DebugLog('Background bitmap created successfully.');
 end;
 
 procedure TFormBreathSettings.SetCaptureStatus(const Value: string);
@@ -784,95 +888,20 @@ end;
 
 function TFormBreathSettings.TryLoadGuideDataText(const Text: string;
   out ErrorText: string): Boolean;
-var
-  FormatSettings: TFormatSettings;
-  Kind: TBreathGuidePoint;
-  Parts: TStringList;
-  ValueIndex: Integer;
-  X: Double;
-  Y: Double;
 begin
-  Result := False;
-  ErrorText := '';
-  if Text = '' then
+  Result := TryDecodeBreathGuide(Text, FGuidePoints, ErrorText);
+  if Result then
   begin
-    ResetGuide;
-    Exit(True);
-  end;
-  Parts := TStringList.Create;
-  try
-    Parts.StrictDelimiter := True;
-    Parts.Delimiter := ';';
-    Parts.DelimitedText := Text;
-    if (Parts.Count <> 13) or (Parts[0] <> 'SBR1') then
-    begin
-      ErrorText := 'Invalid guide data format.';
-      Exit;
-    end;
-    FormatSettings := TFormatSettings.Create('en-US');
-    ValueIndex := 1;
-    for Kind := Low(TBreathGuidePoint) to High(TBreathGuidePoint) do
-    begin
-      if not TryStrToFloat(Parts[ValueIndex], X, FormatSettings) or
-        not TryStrToFloat(Parts[ValueIndex + 1], Y, FormatSettings) or
-        (X < 0) or (X > 1) or (Y < 0) or (Y > 1) then
-      begin
-        ErrorText := 'Invalid guide coordinate.';
-        Exit;
-      end;
-      FGuidePoints[Kind] := PointF(X, Y);
-      Inc(ValueIndex, 2);
-    end;
-    if FGuidePoints[bgpHead].Y >= FGuidePoints[bgpNeck].Y then
-    begin
-      ErrorText := 'Invalid head and neck order.';
-      Exit;
-    end;
-    if FGuidePoints[bgpNeck].Y >= FGuidePoints[bgpChest].Y then
-    begin
-      ErrorText := 'Invalid neck and chest order.';
-      Exit;
-    end;
-    if FGuidePoints[bgpChest].Y >= FGuidePoints[bgpWaist].Y then
-    begin
-      ErrorText := 'Invalid chest and waist order.';
-      Exit;
-    end;
-    if (FGuidePoints[bgpLeftShoulder].X >= FGuidePoints[bgpChest].X) or
-      (FGuidePoints[bgpRightShoulder].X <= FGuidePoints[bgpChest].X) then
-    begin
-      ErrorText := 'Invalid shoulder order.';
-      Exit;
-    end;
     FSelectedPoint := Ord(bgpChest);
     UpdateEditorControls;
     PreviewPaintBox.Invalidate;
-    Result := True;
-  finally
-    Parts.Free;
   end;
 end;
 
 function TFormBreathSettings.TrySaveGuideDataText(out Text,
   ErrorText: string): Boolean;
-var
-  FormatSettings: TFormatSettings;
-  Kind: TBreathGuidePoint;
 begin
-  FormatSettings := TFormatSettings.Create('en-US');
-  Text := 'SBR1';
-  for Kind := Low(TBreathGuidePoint) to High(TBreathGuidePoint) do
-    Text := Text + ';' + FormatFloat('0.000000', FGuidePoints[Kind].X,
-      FormatSettings) + ';' + FormatFloat('0.000000', FGuidePoints[Kind].Y,
-      FormatSettings);
-  Result := Length(Text) <= 32767;
-  if Result then
-    ErrorText := ''
-  else
-  begin
-    Text := '';
-    ErrorText := 'Guide data is too long.';
-  end;
+  Result := TryEncodeBreathGuide(FGuidePoints, Text, ErrorText);
 end;
 
 end.

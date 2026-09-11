@@ -11,7 +11,7 @@ video.height=1080
 video.rate=30
 video.scale=1
 audio.rate=44100
-cursor.frame=0
+cursor.frame=141
 cursor.layer=2
 preview.frame=0
 display.frame=0
@@ -32,7 +32,7 @@ display.tempo.offset=0.000000
 [0]
 layer=0
 focus=1
-frame=0,80
+frame=0,164
 [0.0]
 effect.name=画像ファイル
 ファイル=D:\DelphiProg\test\SYNC_Breath\Image\全体.png
@@ -60,6 +60,10 @@ Group2=1
 合成モード=通常
 [0.2]
 effect.name=呼吸
+呼吸タイプ=通常呼吸
+周期=4.0
+強度=100
+位相=0
 設定=
 ガイドデータ=SBR1;0.498512;0.422872;0.500744;0.281915;0.499256;0.163564;0.499256;0.099734;0.438776;0.246350;0.561224;0.231752
 [plugin.0]
