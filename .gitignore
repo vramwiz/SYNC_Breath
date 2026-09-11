@@ -9,6 +9,8 @@ Win64/
 *.identcache 
 *.exe 
 *.bat 
+!Setup/make_release_zip.bat
+Setup/*.zip
 *.dll 
 *.map 
 *.tds 

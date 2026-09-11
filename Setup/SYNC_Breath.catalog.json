@@ -1,0 +1,55 @@
+[
+  {
+    "id": "VRAMWIZ.SYNC_Breath",
+    "name": "呼吸",
+    "type": "フィルタプラグイン",
+    "summary": "人物画像の胸・腹部・肩・首・頭へ自然な呼吸の動きを加えるフィルター",
+    "description": "https://raw.githubusercontent.com/vramwiz/SYNC_Breath/main/README.md",
+    "author": "VRAMの魔術師",
+    "repoURL": "https://github.com/vramwiz/SYNC_Breath/",
+    "licenses": [
+      {
+        "type": "不明",
+        "isCustom": true,
+        "copyrights": [],
+        "licenseBody": ""
+      }
+    ],
+    "tags": [
+      "呼吸",
+      "人物",
+      "上半身",
+      "胸部",
+      "変形",
+      "アニメーション"
+    ],
+    "dependencies": [],
+    "images": [],
+    "installer": {
+      "source": {
+        "type": "githubRelease",
+        "owner": "vramwiz",
+        "repo": "SYNC_Breath",
+        "pattern": "^SYNC_Breath\\.zip$",
+        "github": {
+          "owner": "vramwiz",
+          "repo": "SYNC_Breath",
+          "pattern": "^SYNC_Breath\\.zip$"
+        }
+      },
+      "install": [
+        { "action": "download" },
+        { "action": "extract" },
+        {
+          "action": "copy",
+          "from": "{tmp}/SYNC_Breath",
+          "to": "{pluginsDir}/SYNC_Breath"
+        }
+      ],
+      "uninstall": [
+        { "action": "delete", "path": "{pluginsDir}/SYNC_Breath" }
+      ]
+    },
+    "version": []
+  }
+]

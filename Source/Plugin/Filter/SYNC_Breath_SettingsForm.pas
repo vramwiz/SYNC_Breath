@@ -15,6 +15,7 @@ uses
   Vcl.ExtCtrls,
   Vcl.Forms,
   Vcl.Graphics,
+  Vcl.Menus,
   Vcl.StdCtrls,
   SYNC_Breath_GuideData;
 
@@ -49,15 +50,13 @@ type
     FEditMode: TBreathEditMode;
     FSelectedPoint: Integer;
     FGuideDragging: Boolean;
-    FTopPanel: TPanel;
-    FRightPanel: TPanel;
-    FEditButton: TButton;
-    FPanButton: TButton;
-    FFitButton: TButton;
-    FResetButton: TButton;
-    FPreviewButton: TButton;
+    FContextMenu: TPopupMenu;
+    FEditMenuItem: TMenuItem;
+    FPanMenuItem: TMenuItem;
+    FFitMenuItem: TMenuItem;
+    FResetMenuItem: TMenuItem;
+    FPreviewMenuItem: TMenuItem;
     FSelectionLabel: TLabel;
-    FPositionLabel: TLabel;
     FPreviewBitmap: TBitmap;
     FPreviewEnabled: Boolean;
     FPreviewStartedTick: UInt64;
@@ -83,6 +82,8 @@ type
     procedure PreviewTimerTick(Sender: TObject);
     procedure UpdateBreathPreview;
     procedure UpdateEditorControls;
+    procedure AddContextMenuItem(const Caption: string; OnClick: TNotifyEvent;
+      out MenuItem: TMenuItem);
     procedure FitImage;
     procedure UpdateStatus;
   public
@@ -120,63 +121,41 @@ begin
 end;
 
 procedure TFormBreathSettings.CreateEditorControls;
+var
+  Separator: TMenuItem;
 begin
-  FTopPanel := TPanel.Create(Self);
-  FTopPanel.Parent := Self;
-  FTopPanel.Align := alTop;
-  FTopPanel.Height := 48;
-  FTopPanel.BevelOuter := bvNone;
-
-  FEditButton := TButton.Create(Self);
-  FEditButton.Parent := FTopPanel;
-  FEditButton.SetBounds(8, 8, 100, 30);
-  FEditButton.Caption := #$30AC#$30A4#$30C9#$7DE8#$96C6;
-  FEditButton.OnClick := EditModeClick;
-
-  FPanButton := TButton.Create(Self);
-  FPanButton.Parent := FTopPanel;
-  FPanButton.SetBounds(114, 8, 100, 30);
-  FPanButton.Caption := #$8868#$793A#$79FB#$52D5;
-  FPanButton.OnClick := PanModeClick;
-
-  FFitButton := TButton.Create(Self);
-  FFitButton.Parent := FTopPanel;
-  FFitButton.SetBounds(220, 8, 90, 30);
-  FFitButton.Caption := #$5168#$4F53#$8868#$793A;
-  FFitButton.OnClick := FitButtonClick;
-
-  FResetButton := TButton.Create(Self);
-  FResetButton.Parent := FTopPanel;
-  FResetButton.SetBounds(316, 8, 90, 30);
-  FResetButton.Caption := #$521D#$671F#$914D#$7F6E;
-  FResetButton.OnClick := ResetButtonClick;
-
-  FPreviewButton := TButton.Create(Self);
-  FPreviewButton.Parent := FTopPanel;
-  FPreviewButton.SetBounds(420, 8, 130, 30);
-  FPreviewButton.Caption := #$547C#$5438#$30D7#$30EC#$30D3#$30E5#$30FC;
-  FPreviewButton.OnClick := PreviewButtonClick;
-
-  FRightPanel := TPanel.Create(Self);
-  FRightPanel.Parent := Self;
-  FRightPanel.Align := alRight;
-  FRightPanel.Width := 220;
-  FRightPanel.BevelOuter := bvNone;
-  FRightPanel.ParentBackground := False;
-  FRightPanel.Color := TColor($00292929);
+  FContextMenu := TPopupMenu.Create(Self);
+  FContextMenu.AutoPopup := True;
+  FContextMenu.Images := nil;
+  AddContextMenuItem(#$30AC#$30A4#$30C9#$7DE8#$96C6, EditModeClick, FEditMenuItem);
+  AddContextMenuItem(#$8868#$793A#$79FB#$52D5, PanModeClick, FPanMenuItem);
+  Separator := TMenuItem.Create(FContextMenu);
+  Separator.Caption := '-';
+  FContextMenu.Items.Add(Separator);
+  AddContextMenuItem(#$5168#$4F53#$8868#$793A, FitButtonClick, FFitMenuItem);
+  AddContextMenuItem(#$521D#$671F#$914D#$7F6E, ResetButtonClick, FResetMenuItem);
+  Separator := TMenuItem.Create(FContextMenu);
+  Separator.Caption := '-';
+  FContextMenu.Items.Add(Separator);
+  AddContextMenuItem(#$547C#$5438#$30D7#$30EC#$30D3#$30E5#$30FC,
+    PreviewButtonClick, FPreviewMenuItem);
+  PreviewPaintBox.PopupMenu := FContextMenu;
 
   FSelectionLabel := TLabel.Create(Self);
-  FSelectionLabel.Parent := FRightPanel;
-  FSelectionLabel.SetBounds(14, 18, 190, 22);
+  FSelectionLabel.Parent := StatusPanel;
+  FSelectionLabel.Align := alBottom;
+  FSelectionLabel.Height := 20;
   FSelectionLabel.Font.Color := clWhite;
-  FSelectionLabel.Font.Style := [fsBold];
+  FSelectionLabel.Font.Color := TColor($00D0D0D0);
+end;
 
-  FPositionLabel := TLabel.Create(Self);
-  FPositionLabel.Parent := FRightPanel;
-  FPositionLabel.SetBounds(14, 50, 190, 90);
-  FPositionLabel.Font.Color := TColor($00D0D0D0);
-  FPositionLabel.AutoSize := False;
-  FPositionLabel.WordWrap := True;
+procedure TFormBreathSettings.AddContextMenuItem(const Caption: string;
+  OnClick: TNotifyEvent; out MenuItem: TMenuItem);
+begin
+  MenuItem := TMenuItem.Create(FContextMenu);
+  MenuItem.Caption := Caption;
+  MenuItem.OnClick := OnClick;
+  FContextMenu.Items.Add(MenuItem);
 end;
 
 procedure TFormBreathSettings.ResetGuide;
@@ -429,7 +408,7 @@ begin
     FPreviewFrameCount := 0;
     FPreviewLastLogTick := 0;
     FPreviewPaintLogged := False;
-    FPreviewButton.Caption := #$30D7#$30EC#$30D3#$30E5#$30FC#$505C#$6B62;
+    FPreviewMenuItem.Caption := #$30D7#$30EC#$30D3#$30E5#$30FC#$505C#$6B62;
     UpdateBreathPreview;
     DebugLog(Format('Preview started: timer enabled=%s, interval=%d ms.',
       [BoolToStr(FPreviewTimer.Enabled, True), FPreviewTimer.Interval]));
@@ -437,7 +416,7 @@ begin
   else
   begin
     FPreviewTimer.Enabled := False;
-    FPreviewButton.Caption := #$547C#$5438#$30D7#$30EC#$30D3#$30E5#$30FC;
+    FPreviewMenuItem.Caption := #$547C#$5438#$30D7#$30EC#$30D3#$30E5#$30FC;
     PreviewPaintBox.Invalidate;
     DebugLog('Preview stopped.');
   end;
@@ -627,22 +606,18 @@ procedure TFormBreathSettings.UpdateEditorControls;
 var
   Kind: TBreathGuidePoint;
 begin
-  FEditButton.Default := FEditMode = bemGuide;
-  FPanButton.Default := FEditMode = bemPan;
+  FEditMenuItem.Checked := FEditMode = bemGuide;
+  FPanMenuItem.Checked := FEditMode = bemPan;
   if FSelectedPoint >= 0 then
   begin
     Kind := TBreathGuidePoint(FSelectedPoint);
-    FSelectionLabel.Caption := #$9078#$629E + ': ' + GuidePointName(Kind);
-    FPositionLabel.Caption := Format('X: %.1f%%'#13#10'Y: %.1f%%'#13#10#13#10,
-      [FGuidePoints[Kind].X * 100, FGuidePoints[Kind].Y * 100]) +
-      #$56DB#$89D2#$3044#$70B9#$3092#$30C9#$30E9#$30C3#$30B0#$3057#$3066 +
-      #$4F4D#$7F6E#$3092#$8ABF#$6574#$3057#$307E#$3059#$3002;
+    FSelectionLabel.Caption := #$9078#$629E + ': ' + GuidePointName(Kind) +
+      Format('  (X: %.1f%% / Y: %.1f%%)', [FGuidePoints[Kind].X * 100,
+      FGuidePoints[Kind].Y * 100]);
   end
   else
   begin
     FSelectionLabel.Caption := #$672A#$9078#$629E;
-    FPositionLabel.Caption := #$7DE8#$96C6#$3059#$308B#$70B9#$3092 +
-      #$9078#$629E#$3057#$3066#$304F#$3060#$3055#$3044#$3002;
   end;
   UpdateStatus;
 end;
