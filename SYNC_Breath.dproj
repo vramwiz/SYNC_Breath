@@ -94,8 +94,10 @@
         <DCCReference Include="Source\Common\Settings\SYNC_Breath_RuntimeSettings.pas"/>
         <DCCReference Include="Source\Common\Settings\SYNC_Breath_GuideData.pas"/>
         <DCCReference Include="Source\Common\Render\SYNC_Breath_RuntimeDeformer.pas"/>
+        <DCCReference Include="Source\Common\Render\SYNC_Breath_HalfPixels.pas"/>
         <DCCReference Include="Source\Common\Render\SYNC_Breath_GpuDeformer.pas"/>
         <DCCReference Include="Source\Common\Render\SYNC_Breath_LastFrameCapture.pas"/>
+        <DCCReference Include="Source\Plugin\Filter\SYNC_Breath_GuideRenderer.pas"/>
         <DCCReference Include="Source\Plugin\Filter\SYNC_Breath_SettingsForm.pas">
             <Form>FormBreathSettings</Form>
         </DCCReference>

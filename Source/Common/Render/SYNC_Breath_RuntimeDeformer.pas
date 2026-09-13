@@ -111,7 +111,6 @@ var
   ImageX: Double;
   ImageY: Double;
   Influence: Double;
-  Phase: Double;
   PixelCount: NativeInt;
   SourceIndex: NativeInt;
   SourceY: Integer;
@@ -144,12 +143,7 @@ begin
     Move(SourcePixels[0], OutputPixels[0], Length(SourcePixels));
 
     TimeSeconds := Video^.Object_^.Time;
-    Phase := Frac(TimeSeconds / Settings.PeriodSeconds +
-      Settings.PhaseDegrees / 360.0) * 2 * Pi;
-    Breath := 0.5 - 0.5 * Cos(Phase);
-    if Settings.BreathType = btHeavy then
-      Breath := Power(Breath, 0.55);
-    Breath := Breath * Settings.Strength;
+    Breath := CalculateBreathAmount(TimeSeconds, Settings);
     CenterX := CachedGuide[1].X;
     ChestWidth := Max(0.08, (CachedGuide[5].X - CachedGuide[4].X) * 0.52);
 

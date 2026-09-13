@@ -1,4 +1,4 @@
-unit SYNC_Breath_GpuDeformer;
+﻿unit SYNC_Breath_GpuDeformer;
 
 interface
 
@@ -15,19 +15,17 @@ implementation
 
 uses
   System.Classes,
-  System.Math,
   System.SysUtils,
   Winapi.D3D11,
   Winapi.DXGIFormat,
   Winapi.Windows,
   SYNC_Breath_DebugLog,
+  SYNC_Breath_HalfPixels,
   SYNC_Breath_GuideData;
 
 {$R 'Shader\SYNC_Breath_Compute.res'}
 
 type
-  TWordArray = array[0..7] of Word;
-  PWordArray = ^TWordArray;
   TConstants = packed record
     Width, Height: Cardinal;
     Breath, Padding: Single;
@@ -147,36 +145,6 @@ begin
   Result := True;
 end;
 
-function HalfToSingle(Value: Word): Single;
-var
-  E: Integer;
-  M, Bits, Sign: Cardinal;
-begin
-  Sign := Cardinal(Value and $8000) shl 16;
-  E := (Value shr 10) and $1F;
-  M := Value and $03FF;
-  if E = 0 then
-  begin
-    if M = 0 then Bits := Sign
-    else
-    begin
-      E := -14;
-      while (M and $0400) = 0 do begin M := M shl 1; Dec(E); end;
-      Bits := Sign or Cardinal(E + 127) shl 23 or (M and $03FF) shl 13;
-    end;
-  end
-  else if E = $1F then Bits := Sign or $7F800000 or M shl 13
-  else Bits := Sign or Cardinal(E + 112) shl 23 or M shl 13;
-  Result := PSingle(@Bits)^;
-end;
-
-function FloatByte(Value: Single): Byte;
-begin
-  if IsNan(Value) or (Value <= 0) then Exit(0);
-  if Value >= 1 then Exit(255);
-  Result := Round(Value * 255);
-end;
-
 function ApplyBreathGpu(Video: PFILTER_PROC_VIDEO; const GuideText: string;
   const Settings: TBreathRuntimeSettings; out ErrorText: string): Boolean;
 var
@@ -188,34 +156,41 @@ var
   Mapped: TD3D11_MAPPED_SUBRESOURCE;
   NoSRV: ID3D11ShaderResourceView;
   NoUAV: ID3D11UnorderedAccessView;
-  Phase, Wave: Double;
+  Wave: Double;
   Dst, Src: PByte;
-  Words: PWordArray;
-  X, Y: Integer;
+  Y: Integer;
+{$IFDEF DEBUG}
+  TotalStart, StageStart: Int64;
+{$ENDIF}
 begin
   Result := False;
   ErrorText := '';
   if not GInitialized or (Video = nil) or
     not Assigned(Video^.GetImageTexture2D) or
     not Assigned(Video^.SetImageData) then Exit;
+{$IFDEF DEBUG}
+  TotalStart := PerfNow;
+  StageStart := PerfNow;
+{$ENDIF}
   EnterCriticalSection(GLock);
   try
     try
       Source := ID3D11Texture2D(Video^.GetImageTexture2D());
       if (Source = nil) or not EnsureResources(Source, ErrorText) then Exit;
       if not TryDecodeBreathGuide(GuideText, Guide, ErrorText) then Exit;
-      Phase := Frac(Video^.Object_^.Time / Settings.PeriodSeconds +
-        Settings.PhaseDegrees / 360) * 2 * Pi;
-      Wave := 0.5 - 0.5 * Cos(Phase);
-      if Settings.BreathType = btHeavy then Wave := Power(Wave, 0.55);
+      Wave := CalculateBreathAmount(Video^.Object_^.Time, Settings);
       FillChar(C, SizeOf(C), 0);
       C.Width := GWidth; C.Height := GHeight;
-      C.Breath := Wave * Settings.Strength;
+      C.Breath := Wave;
       C.CenterX := Guide[bgpChest].X; C.WaistY := Guide[bgpWaist].Y;
       C.ChestY := Guide[bgpChest].Y; C.NeckY := Guide[bgpNeck].Y;
       C.HeadY := Guide[bgpHead].Y;
       C.LeftShoulderX := Guide[bgpLeftShoulder].X;
       C.RightShoulderX := Guide[bgpRightShoulder].X;
+{$IFDEF DEBUG}
+      PerfRecord(psGpuSetup, StageStart);
+      StageStart := PerfNow;
+{$ENDIF}
       GContext.ClearState;
       GContext.CopyResource(GInput, Source);
       GContext.UpdateSubresource(GBuffer, 0, nil, @C, 0, 0);
@@ -231,9 +206,17 @@ begin
       begin ErrorText := 'FinishCommandList failed'; Exit; end;
       GDevice.GetImmediateContext(Immediate);
       Immediate.ExecuteCommandList(CommandList, True);
+{$IFDEF DEBUG}
+      PerfRecord(psGpuSubmit, StageStart);
+      StageStart := PerfNow;
+{$ENDIF}
       FillChar(Mapped, SizeOf(Mapped), 0);
       if Immediate.Map(GReadback, 0, D3D11_MAP_READ, 0, Mapped) < 0 then
       begin ErrorText := 'Map readback failed'; Exit; end;
+{$IFDEF DEBUG}
+      PerfRecord(psReadbackWait, StageStart);
+      StageStart := PerfNow;
+{$ENDIF}
       try
         Dst := @GOutputPixels[0];
         for Y := 0 to GHeight - 1 do
@@ -247,30 +230,32 @@ begin
           end
           else
           begin
-            Words := PWordArray(Src);
-            for X := 0 to GWidth - 1 do
-            begin
-              Dst[0] := FloatByte(HalfToSingle(Words[0]));
-              Dst[1] := FloatByte(HalfToSingle(Words[1]));
-              Dst[2] := FloatByte(HalfToSingle(Words[2]));
-              Dst[3] := FloatByte(HalfToSingle(Words[3]));
-              Words := PWordArray(PByte(Words) + 8);
-              Inc(Dst, 4);
-            end;
+            ConvertHalfRgbaRow(System.PWord(Src), Dst, GWidth);
+            Inc(Dst, GWidth * 4);
           end;
         end;
       finally
         Immediate.Unmap(GReadback, 0);
       end;
+{$IFDEF DEBUG}
+      PerfRecord(psPixelConvert, StageStart);
+      StageStart := PerfNow;
+{$ENDIF}
       Video^.SetImageData(PPIXEL_RGBA(@GOutputPixels[0]), GWidth, GHeight);
+{$IFDEF DEBUG}
+      PerfRecord(psSetImage, StageStart);
+{$ENDIF}
       if not GLoggedGpu then
-      begin DebugLog('Runtime deformation path: D3D11 GPU.'); GLoggedGpu := True; end;
+      begin DebugLog(Format('Runtime deformation path: D3D11 GPU; %dx%d format=%d; half conversion=LUT64K.', [GWidth, GHeight, Ord(GFormat)])); GLoggedGpu := True; end;
       Result := True;
     except
       on E: Exception do ErrorText := E.ClassName + ': ' + E.Message;
     end;
   finally
     LeaveCriticalSection(GLock);
+{$IFDEF DEBUG}
+    PerfRecord(psGpuTotal, TotalStart);
+{$ENDIF}
   end;
 end;
 

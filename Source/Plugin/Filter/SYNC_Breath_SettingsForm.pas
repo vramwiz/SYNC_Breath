@@ -17,11 +17,10 @@ uses
   Vcl.Graphics,
   Vcl.Menus,
   Vcl.StdCtrls,
-  SYNC_Breath_GuideData;
+  SYNC_Breath_GuideData,
+  SYNC_Breath_RuntimeSettings;
 
 type
-  TBreathEditMode = (bemGuide, bemPan);
-
   TFormBreathSettings = class(TForm)
     PreviewPaintBox: TPaintBox;
     StatusPanel: TPanel;
@@ -30,6 +29,8 @@ type
     procedure FormDestroy(Sender: TObject);
     procedure FormMouseWheel(Sender: TObject; Shift: TShiftState;
       WheelDelta: Integer; MousePos: TPoint; var Handled: Boolean);
+    procedure FormKeyDown(Sender: TObject; var Key: Word;
+      Shift: TShiftState);
     procedure PreviewPaintBoxDblClick(Sender: TObject);
     procedure PreviewPaintBoxMouseDown(Sender: TObject;
       Button: TMouseButton; Shift: TShiftState; X, Y: Integer);
@@ -47,12 +48,9 @@ type
     FOffsetOrigin: TPoint;
     FZoomPercent: Integer;
     FGuidePoints: TBreathGuidePoints;
-    FEditMode: TBreathEditMode;
     FSelectedPoint: Integer;
     FGuideDragging: Boolean;
     FContextMenu: TPopupMenu;
-    FEditMenuItem: TMenuItem;
-    FPanMenuItem: TMenuItem;
     FFitMenuItem: TMenuItem;
     FResetMenuItem: TMenuItem;
     FPreviewMenuItem: TMenuItem;
@@ -64,6 +62,7 @@ type
     FPreviewFrameCount: Integer;
     FPreviewLastLogTick: UInt64;
     FPreviewPaintLogged: Boolean;
+    FRuntimeSettings: TBreathRuntimeSettings;
     function DestinationRect: TRect;
     function CanvasToNormalized(X, Y: Integer;
       out Position: TPointF): Boolean;
@@ -74,8 +73,6 @@ type
       const Position: TPointF);
     procedure ResetGuide;
     procedure CreateEditorControls;
-    procedure EditModeClick(Sender: TObject);
-    procedure PanModeClick(Sender: TObject);
     procedure FitButtonClick(Sender: TObject);
     procedure ResetButtonClick(Sender: TObject);
     procedure PreviewButtonClick(Sender: TObject);
@@ -89,6 +86,7 @@ type
   public
     procedure SetBackgroundRgba(const Pixels: TBytes; Width, Height: Integer);
     procedure SetCaptureStatus(const Value: string);
+    procedure SetRuntimeSettings(const Value: TBreathRuntimeSettings);
     function TryLoadGuideDataText(const Text: string;
       out ErrorText: string): Boolean;
     function TrySaveGuideDataText(out Text, ErrorText: string): Boolean;
@@ -99,7 +97,8 @@ implementation
 uses
   System.Math,
   Winapi.Windows,
-  SYNC_Breath_DebugLog;
+  SYNC_Breath_DebugLog,
+  SYNC_Breath_GuideRenderer;
 
 {$R *.dfm}
 
@@ -122,13 +121,17 @@ end;
 
 procedure TFormBreathSettings.CreateEditorControls;
 var
+  GuideStateItem: TMenuItem;
   Separator: TMenuItem;
 begin
   FContextMenu := TPopupMenu.Create(Self);
   FContextMenu.AutoPopup := True;
   FContextMenu.Images := nil;
-  AddContextMenuItem(#$30AC#$30A4#$30C9#$7DE8#$96C6, EditModeClick, FEditMenuItem);
-  AddContextMenuItem(#$8868#$793A#$79FB#$52D5, PanModeClick, FPanMenuItem);
+  GuideStateItem := TMenuItem.Create(FContextMenu);
+  GuideStateItem.Caption := #$30AC#$30A4#$30C9#$7DE8#$96C6;
+  GuideStateItem.Checked := True;
+  GuideStateItem.Enabled := False;
+  FContextMenu.Items.Add(GuideStateItem);
   Separator := TMenuItem.Create(FContextMenu);
   Separator.Caption := '-';
   FContextMenu.Items.Add(Separator);
@@ -139,6 +142,7 @@ begin
   FContextMenu.Items.Add(Separator);
   AddContextMenuItem(#$547C#$5438#$30D7#$30EC#$30D3#$30E5#$30FC,
     PreviewButtonClick, FPreviewMenuItem);
+  FPreviewMenuItem.ShortCut := ShortCut(VK_SPACE, []);
   PreviewPaintBox.PopupMenu := FContextMenu;
 
   FSelectionLabel := TLabel.Create(Self);
@@ -275,6 +279,9 @@ var
 begin
   if (FBackground.Width <= 0) or (FBackground.Height <= 0) then
     Exit;
+  DrawBreathGuide(Canvas, DestinationRect, FGuidePoints, FSelectedPoint,
+    CurrentPPI);
+  Exit;
   HeadPoint := GuidePointToCanvas(bgpHead);
   NeckPoint := GuidePointToCanvas(bgpNeck);
   ChestPoint := GuidePointToCanvas(bgpChest);
@@ -373,18 +380,6 @@ begin
   Canvas.Brush.Style := bsSolid;
 end;
 
-procedure TFormBreathSettings.EditModeClick(Sender: TObject);
-begin
-  FEditMode := bemGuide;
-  UpdateEditorControls;
-end;
-
-procedure TFormBreathSettings.PanModeClick(Sender: TObject);
-begin
-  FEditMode := bemPan;
-  UpdateEditorControls;
-end;
-
 procedure TFormBreathSettings.FitButtonClick(Sender: TObject);
 begin
   FitImage;
@@ -431,7 +426,6 @@ end;
 
 procedure TFormBreathSettings.UpdateBreathPreview;
 const
-  PREVIEW_CYCLE_MS: UInt64 = 3000;
   PREVIEW_MAX_WIDTH = 672;
   PREVIEW_MAX_HEIGHT = 480;
   CHEST_LIFT = 0.026;
@@ -455,7 +449,6 @@ var
   Influence: Double;
   LeftX: Double;
   LogicalY: Integer;
-  Phase: Double;
   PreviewHeight: Integer;
   PreviewScale: Double;
   PreviewWidth: Integer;
@@ -491,9 +484,8 @@ begin
     (FPreviewBitmap.Height <> PreviewHeight) then
     FPreviewBitmap.SetSize(PreviewWidth, PreviewHeight);
 
-  Phase := ((GetTickCount64 - FPreviewStartedTick) mod
-    PREVIEW_CYCLE_MS) / PREVIEW_CYCLE_MS * 2 * Pi;
-  BreathAmount := 0.5 - 0.5 * Cos(Phase);
+  BreathAmount := CalculateBreathAmount(
+    (GetTickCount64 - FPreviewStartedTick) / 1000.0, FRuntimeSettings);
   CenterX := FGuidePoints[bgpChest].X;
   LeftX := FGuidePoints[bgpLeftShoulder].X;
   RightX := FGuidePoints[bgpRightShoulder].X;
@@ -592,9 +584,9 @@ begin
   NowTick := GetTickCount64;
   if (FPreviewFrameCount = 1) or (NowTick - FPreviewLastLogTick >= 1000) then
   begin
-    DebugLog(Format('Preview frame=%d phase=%.3f breath=%.3f changed=%d '+
+    DebugLog(Format('Preview frame=%d breath=%.3f changed=%d '+
       'max-vertical-displacement=%.1f px processing=%d ms bitmap=%dx%d.',
-      [FPreviewFrameCount, Phase, BreathAmount, ChangedPixelCount,
+      [FPreviewFrameCount, BreathAmount, ChangedPixelCount,
       MaximumDisplacementPixels, NowTick - FrameStartedTick,
       FPreviewBitmap.Width, FPreviewBitmap.Height]));
     FPreviewLastLogTick := NowTick;
@@ -606,8 +598,6 @@ procedure TFormBreathSettings.UpdateEditorControls;
 var
   Kind: TBreathGuidePoint;
 begin
-  FEditMenuItem.Checked := FEditMode = bemGuide;
-  FPanMenuItem.Checked := FEditMode = bemPan;
   if FSelectedPoint >= 0 then
   begin
     Kind := TBreathGuidePoint(FSelectedPoint);
@@ -666,7 +656,6 @@ begin
   FZoomPercent := 100;
   FFitToWindow := True;
   FOffset := Point(0, 0);
-  FEditMode := bemGuide;
   FSelectedPoint := -1;
   DoubleBuffered := True;
   TControlAccess(PreviewPaintBox).ControlStyle :=
@@ -700,6 +689,16 @@ begin
   Handled := True;
 end;
 
+procedure TFormBreathSettings.FormKeyDown(Sender: TObject; var Key: Word;
+  Shift: TShiftState);
+begin
+  if (Key = VK_SPACE) and (Shift = []) then
+  begin
+    PreviewButtonClick(Self);
+    Key := 0;
+  end;
+end;
+
 procedure TFormBreathSettings.PreviewPaintBoxDblClick(Sender: TObject);
 begin
   FitImage;
@@ -710,7 +709,7 @@ procedure TFormBreathSettings.PreviewPaintBoxMouseDown(Sender: TObject;
 var
   HitIndex: Integer;
 begin
-  if (Button = mbLeft) and (FEditMode = bemGuide) then
+  if (Button = mbLeft) and not FPreviewEnabled then
   begin
     HitIndex := HitTestGuidePoint(X, Y);
     if HitIndex >= 0 then
@@ -794,7 +793,8 @@ begin
     PreviewPaintBox.Canvas.StretchDraw(Destination, FPreviewBitmap)
   else
     PreviewPaintBox.Canvas.StretchDraw(Destination, FBackground);
-  DrawGuide(PreviewPaintBox.Canvas);
+  if not FPreviewEnabled then
+    DrawGuide(PreviewPaintBox.Canvas);
 end;
 
 procedure TFormBreathSettings.SetBackgroundRgba(const Pixels: TBytes;
@@ -838,6 +838,12 @@ procedure TFormBreathSettings.SetCaptureStatus(const Value: string);
 begin
   StatusLabel.Hint := Value;
   UpdateStatus;
+end;
+
+procedure TFormBreathSettings.SetRuntimeSettings(
+  const Value: TBreathRuntimeSettings);
+begin
+  FRuntimeSettings := Value;
 end;
 
 procedure TFormBreathSettings.UpdateStatus;

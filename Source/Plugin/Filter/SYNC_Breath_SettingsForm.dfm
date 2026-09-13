@@ -14,6 +14,7 @@ object FormBreathSettings: TFormBreathSettings
   Position = poScreenCenter
   OnCreate = FormCreate
   OnDestroy = FormDestroy
+  OnKeyDown = FormKeyDown
   OnMouseWheel = FormMouseWheel
   TextHeight = 15
   object PreviewPaintBox: TPaintBox

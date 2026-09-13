@@ -37,8 +37,18 @@ var
   ErrorText: string;
   GuideText: string;
   Settings: TBreathRuntimeSettings;
+{$IFDEF DEBUG}
+  TotalStart, StageStart: Int64;
+{$ENDIF}
 begin
+{$IFDEF DEBUG}
+  TotalStart := PerfNow;
+  StageStart := PerfNow;
+{$ENDIF}
   CaptureLastFrame(Video);
+{$IFDEF DEBUG}
+  PerfRecord(psCapture, StageStart);
+{$ENDIF}
   GuideText := '';
   if Assigned(GuideDataItem.Value) then
     GuideText := string(GuideDataItem.Value);
@@ -50,9 +60,18 @@ begin
       DebugLog('Runtime deformation GPU fallback: ' + ErrorText);
       CpuFallbackLogged := True;
     end;
+{$IFDEF DEBUG}
+    StageStart := PerfNow;
+{$ENDIF}
     ApplyBreathToVideo(Video, GuideText, Settings);
+{$IFDEF DEBUG}
+    PerfRecord(psCpuFallback, StageStart);
+{$ENDIF}
   end;
   Result := 1;
+{$IFDEF DEBUG}
+  PerfRecord(psTotal, TotalStart);
+{$ENDIF}
 end;
 
 procedure SettingsButtonCallback(Edit: PEDIT_SECTION); cdecl;
@@ -81,6 +100,7 @@ begin
       else
         DebugLog('Last frame copy failed: ' + Status);
       SettingsForm.SetCaptureStatus(Status);
+      SettingsForm.SetRuntimeSettings(CurrentBreathRuntimeSettings);
       CurrentDataText := '';
       if Assigned(GuideDataItem.Value) then
         CurrentDataText := string(GuideDataItem.Value);
@@ -149,6 +169,9 @@ end;
 
 procedure FinalizeBreathPlugin;
 begin
+{$IFDEF DEBUG}
+  FlushPerformance;
+{$ENDIF}
   DebugLog('FinalizeBreathPlugin.');
   FinalizeGpuDeformer;
   FinalizeRuntimeDeformer;

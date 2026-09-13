@@ -1,0 +1,19 @@
+﻿2026-09-12 13:19:01.793 Debug log started. PERF v1: 120 callbacks/batch; batch 0 includes warmup; host elapsed ms; Debug only.
+2026-09-12 13:19:01.794 InitializeBreathPlugin: host version=2010301.
+2026-09-12 13:19:41.082 Runtime deformation path: D3D11 GPU; 1125x1500 format=10.
+2026-09-12 13:19:55.142 PERF stage=capture batch=0 n=120 mean_ms=9.4948 max_ms=24.4355
+2026-09-12 13:19:55.143 PERF stage=gpu_setup batch=0 n=120 mean_ms=2.8459 max_ms=3.8432
+2026-09-12 13:19:55.144 PERF stage=gpu_submit batch=0 n=120 mean_ms=0.1684 max_ms=0.4551
+2026-09-12 13:19:55.146 PERF stage=readback_wait batch=0 n=120 mean_ms=4.8080 max_ms=7.2210
+2026-09-12 13:19:55.148 PERF stage=pixel_convert batch=0 n=120 mean_ms=56.2268 max_ms=80.9813
+2026-09-12 13:19:55.149 PERF stage=set_image batch=0 n=120 mean_ms=0.9961 max_ms=1.3728
+2026-09-12 13:19:55.149 PERF stage=gpu_total batch=0 n=120 mean_ms=65.0536 max_ms=92.0295
+2026-09-12 13:19:55.149 PERF stage=callback_total batch=0 n=120 mean_ms=74.5538 max_ms=100.8275
+2026-09-12 13:20:05.671 PERF stage=capture batch=1 n=120 mean_ms=8.8272 max_ms=14.1688
+2026-09-12 13:20:05.671 PERF stage=gpu_setup batch=1 n=120 mean_ms=2.8267 max_ms=3.5727
+2026-09-12 13:20:05.672 PERF stage=gpu_submit batch=1 n=120 mean_ms=0.1642 max_ms=0.5167
+2026-09-12 13:20:05.672 PERF stage=readback_wait batch=1 n=120 mean_ms=4.7415 max_ms=7.2354
+2026-09-12 13:20:05.673 PERF stage=pixel_convert batch=1 n=120 mean_ms=56.0193 max_ms=78.8327
+2026-09-12 13:20:05.673 PERF stage=set_image batch=1 n=120 mean_ms=0.9909 max_ms=1.4161
+2026-09-12 13:20:05.674 PERF stage=gpu_total batch=1 n=120 mean_ms=64.7478 max_ms=89.1025
+2026-09-12 13:20:05.674 PERF stage=callback_total batch=1 n=120 mean_ms=73.5810 max_ms=97.1277
